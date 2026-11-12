@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.uv-cache/
+uv.cache/
+
+# Node / Next.js
+node_modules/
+.next/
+.nuxt/
+out/
+dist/
+.pnp
+.pnp.js
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+*.iml
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+android/key.properties
+*.jks
+*.keystore
+
+# Database / Uploads
+*.db
+*.sqlite
+uploads/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
