@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -19,9 +20,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -160,8 +161,8 @@ class Organization(Base, UUIDMixin, TimestampMixin):
     logo_url: Mapped[str | None] = mapped_column(String(1024))
     address: Mapped[str | None] = mapped_column(Text)
     timezone: Mapped[str] = mapped_column(String(100), default="UTC", nullable=False)
-    business_hours: Mapped[dict | None] = mapped_column(JSONB)  # {mon: {open: "08:00", close: "17:00"}, ...}
-    sla_policy: Mapped[dict | None] = mapped_column(JSONB)  # {high: 4, urgent: 1, ...} hours
+    business_hours: Mapped[dict | None] = mapped_column(JSON)  # {mon: {open: "08:00", close: "17:00"}, ...}
+    sla_policy: Mapped[dict | None] = mapped_column(JSON)  # {high: 4, urgent: 1, ...} hours
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
@@ -180,13 +181,13 @@ class OrganizationMembership(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("organization_id", "user_id", name="uq_org_membership"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     role: Mapped[MemberRole] = mapped_column(Enum(MemberRole), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    invited_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    invited_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     hourly_rate: Mapped[float | None] = mapped_column(Numeric(10, 2))
-    skills: Mapped[list | None] = mapped_column(JSONB)  # ["plumbing", "electrical"]
+    skills: Mapped[list | None] = mapped_column(JSON)  # ["plumbing", "electrical"]
 
     # Relationships
     organization: Mapped["Organization"] = relationship(back_populates="memberships")
@@ -197,7 +198,7 @@ class OrganizationMembership(Base, UUIDMixin, TimestampMixin):
 class Holiday(Base, UUIDMixin):
     __tablename__ = "holidays"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -211,13 +212,13 @@ class ServiceCategory(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("organization_id", "name", name="uq_category_name_per_org"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     color: Mapped[str | None] = mapped_column(String(20))  # hex color
     icon: Mapped[str | None] = mapped_column(String(100))
     sla_hours: Mapped[float | None] = mapped_column(Float)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_categories.id", ondelete="SET NULL"))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     organization: Mapped["Organization"] = relationship(back_populates="categories")
@@ -228,7 +229,7 @@ class ServiceCategory(Base, UUIDMixin, TimestampMixin):
 class Property(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "properties"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
     city: Mapped[str | None] = mapped_column(String(100))
@@ -242,7 +243,7 @@ class Property(Base, UUIDMixin, TimestampMixin):
     contact_email: Mapped[str | None] = mapped_column(String(255))
     access_notes: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
 
     organization: Mapped["Organization"] = relationship(back_populates="properties")
     assets: Mapped[list["Asset"]] = relationship(back_populates="property")
@@ -252,8 +253,8 @@ class Property(Base, UUIDMixin, TimestampMixin):
 class Asset(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "assets"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     asset_tag: Mapped[str | None] = mapped_column(String(100), index=True)
     make: Mapped[str | None] = mapped_column(String(255))
@@ -264,7 +265,7 @@ class Asset(Base, UUIDMixin, TimestampMixin):
     purchase_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     warranty_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     location_description: Mapped[str | None] = mapped_column(Text)
-    specifications: Mapped[dict | None] = mapped_column(JSONB)
+    specifications: Mapped[dict | None] = mapped_column(JSON)
     image_url: Mapped[str | None] = mapped_column(String(1024))
     qr_code: Mapped[str | None] = mapped_column(String(255))
 
@@ -277,8 +278,8 @@ class Asset(Base, UUIDMixin, TimestampMixin):
 class AssetHistory(Base, UUIDMixin):
     __tablename__ = "asset_history"
 
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     field_name: Mapped[str] = mapped_column(String(100), nullable=False)
     old_value: Mapped[str | None] = mapped_column(Text)
     new_value: Mapped[str | None] = mapped_column(Text)
@@ -295,11 +296,11 @@ class ServiceRequest(Base, UUIDMixin, TimestampMixin):
         Index("ix_sr_org_created", "org_id", "created_at"),
     )
 
-    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    requester_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    property_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="SET NULL"))
-    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"))
-    category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_categories.id", ondelete="SET NULL"))
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    requester_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
+    property_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="SET NULL"))
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="SET NULL"))
+    category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
     request_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -317,8 +318,8 @@ class ServiceRequest(Base, UUIDMixin, TimestampMixin):
     source: Mapped[str] = mapped_column(String(50), default="web", nullable=False)  # web, mobile, api, pm
     external_ref: Mapped[str | None] = mapped_column(String(255))  # for maintenance-generated
     resolution_notes: Mapped[str | None] = mapped_column(Text)
-    tags: Mapped[list | None] = mapped_column(JSONB)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    tags: Mapped[list | None] = mapped_column(JSON)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
 
     organization: Mapped["Organization"] = relationship(back_populates="service_requests")
     property: Mapped["Property | None"] = relationship(back_populates="service_requests")
@@ -338,9 +339,9 @@ class Assignment(Base, UUIDMixin, TimestampMixin):
         Index("ix_assignment_tech_time", "technician_id", "start_at", "end_at"),
     )
 
-    service_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    technician_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organization_memberships.id", ondelete="CASCADE"), nullable=False)
-    assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organization_memberships.id", ondelete="CASCADE"), nullable=False)
+    assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     status: Mapped[AssignmentStatus] = mapped_column(Enum(AssignmentStatus), default=AssignmentStatus.PENDING, nullable=False)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -360,9 +361,9 @@ class Assignment(Base, UUIDMixin, TimestampMixin):
 class Estimate(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "estimates"
 
-    service_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     status: Mapped[EstimateStatus] = mapped_column(Enum(EstimateStatus), default=EstimateStatus.DRAFT, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     labor_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
@@ -374,7 +375,7 @@ class Estimate(Base, UUIDMixin, TimestampMixin):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejection_reason: Mapped[str | None] = mapped_column(Text)
-    line_items: Mapped[list | None] = mapped_column(JSONB)  # [{description, qty, unit_price, total}]
+    line_items: Mapped[list | None] = mapped_column(JSON)  # [{description, qty, unit_price, total}]
 
     service_request: Mapped["ServiceRequest"] = relationship(back_populates="estimates")
 
@@ -385,13 +386,13 @@ class WorkNote(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("client_command_id", name="uq_work_note_command"),
     )
 
-    service_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    author_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     content: Mapped[str] = mapped_column(Text, nullable=False)
     visibility: Mapped[NoteVisibility] = mapped_column(Enum(NoteVisibility), default=NoteVisibility.INTERNAL, nullable=False)
     client_command_id: Mapped[str | None] = mapped_column(String(255), unique=True)  # idempotency key
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
 
     service_request: Mapped["ServiceRequest"] = relationship(back_populates="work_notes")
     file_attachments: Mapped[list["FileAttachment"]] = relationship(back_populates="work_note")
@@ -400,10 +401,10 @@ class WorkNote(Base, UUIDMixin, TimestampMixin):
 class FileAttachment(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "file_attachments"
 
-    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"))
-    work_note_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("work_notes.id", ondelete="CASCADE"))
-    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"))
+    work_note_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("work_notes.id", ondelete="CASCADE"))
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -421,7 +422,7 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("organization_id", "sku", name="uq_inventory_sku_per_org"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     sku: Mapped[str | None] = mapped_column(String(100))
@@ -442,13 +443,13 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
 class InventoryTransaction(Base, UUIDMixin):
     __tablename__ = "inventory_transactions"
 
-    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
     transaction_type: Mapped[InventoryTransactionType] = mapped_column(Enum(InventoryTransactionType), nullable=False)
     quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
     unit_cost: Mapped[float | None] = mapped_column(Numeric(10, 2))
-    reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # service_request or other ref
+    reference_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)  # service_request or other ref
     notes: Mapped[str | None] = mapped_column(Text)
-    performed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    performed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     transacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     item: Mapped["InventoryItem"] = relationship(back_populates="transactions")
@@ -460,9 +461,9 @@ class MaterialUsage(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("client_command_id", name="uq_material_usage_command"),
     )
 
-    service_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False)
-    recorded_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False)
+    recorded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
     unit_cost: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     total_cost: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
@@ -476,10 +477,10 @@ class MaterialUsage(Base, UUIDMixin, TimestampMixin):
 class MaintenancePlan(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "maintenance_plans"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"))
-    property_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="SET NULL"))
-    category_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_categories.id", ondelete="SET NULL"))
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="SET NULL"))
+    property_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="SET NULL"))
+    category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     recurrence: Mapped[RecurrenceRule] = mapped_column(Enum(RecurrenceRule), nullable=False)
@@ -503,8 +504,8 @@ class MaintenancePlanOccurrence(Base, UUIDMixin):
         UniqueConstraint("plan_id", "occurrence_date", name="uq_plan_occurrence_date"),
     )
 
-    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("maintenance_plans.id", ondelete="CASCADE"), nullable=False, index=True)
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="SET NULL"))
+    plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("maintenance_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="SET NULL"))
     occurrence_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -514,13 +515,13 @@ class MaintenancePlanOccurrence(Base, UUIDMixin):
 class Notification(Base, UUIDMixin):
     __tablename__ = "notifications"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    org_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
     type: Mapped[str] = mapped_column(String(100), nullable=False)  # assignment, sla_breach, etc.
     reference_type: Mapped[str | None] = mapped_column(String(100))
-    reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    reference_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -535,17 +536,18 @@ class AuditEvent(Base, UUIDMixin):
         Index("ix_audit_sr", "service_request_id", "created_at"),
     )
 
-    org_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), index=True)
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id", ondelete="SET NULL"))
+    org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="SET NULL"), index=True)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
+    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="SET NULL"))
     action: Mapped[AuditAction] = mapped_column(Enum(AuditAction), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    old_value: Mapped[dict | None] = mapped_column(JSONB)
-    new_value: Mapped[dict | None] = mapped_column(JSONB)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    old_value: Mapped[dict | None] = mapped_column(JSON)
+    new_value: Mapped[dict | None] = mapped_column(JSON)
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     actor: Mapped["User | None"] = relationship(back_populates="audit_events")
     service_request: Mapped["ServiceRequest | None"] = relationship(back_populates="audit_events")
+
