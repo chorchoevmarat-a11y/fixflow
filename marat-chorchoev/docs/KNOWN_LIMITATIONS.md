@@ -63,7 +63,8 @@ This document is deliberately blunt. Nothing listed under "Not done" or "Not ver
 ## Found during testing, not fixed
 
 * **`Idempotency-Key` is optional when creating a request.** The web app always sends one (a double-clicked Submit
-  creates one request), but a raw API client that retries without it can create a duplicate.
+  creates one request). A raw client that retries without it is still caught by the spam guard when the text is
+  identical to the requester's own open request (see PRODUCT_DECISIONS #9); a retry that changed any wording is not.
 * **Mobile:** a completion photo retaken after a timeout gets a new command id and can be stored twice; photos
   already uploaded on the completion screen are only remembered while that screen is open; a note that keeps failing
   with a server error (5xx) pauses the whole queue behind it, retrying forever.

@@ -3,7 +3,52 @@
 Working notes for the team: what the project is, what changed in the rebuild, and what is left.
 Source of truth for requirements: `FixFlow_Requirements_261112_170928.pdf` (v2.0). Submission deadline:
 **Sunday 15 Nov 2026, 18:00 Asia/Bishkek**; repository access opens 16:00.
-Last refreshed: **13 Nov 2026** (after the adversarial testing round described below).
+Last refreshed: **13 Nov 2026, late evening** (after the adversarial testing round described below).
+
+## Handoff — read this first (state when this was written)
+
+**Git:** branch `main`, last commit `be23758`, working tree clean, nothing pushed from these sessions. The
+commits since the rebuild (`03a880a`) are: web/backend hardening (`4f468d5`, `4e104bb`), mobile fixes (`392b9a3`,
+`81800a5`, `14ed4f0`), docs + `.dockerignore` (`9be090a`), Docker fix (`be23758`). Commit only when asked; the
+owner asks for commits as separate, explicit requests.
+
+**What is running right now (all on this Windows machine):**
+
+| Thing | Address | Notes |
+| --- | --- | --- |
+| Dev API | http://127.0.0.1:8000 | `uv run uvicorn app.main:app --port 8000` from `backend/` (Claude desktop Terminal tab "backend :8000"); restarted after the last backend change, so it has every backend fix |
+| Dev web | http://localhost:3000 | `next dev` (the owner's own process; hot-reloads) |
+| PostgreSQL service | localhost:5432 | database `fixflow` = the dev data (**polluted, see below**); `fixflow_test` = tests |
+| Docker stack | web http://localhost:3001, API http://localhost:8001, db 5433 | 3 containers healthy, own volumes, fresh seed plus two probe requests (REQ-00052/53); config in the gitignored `.env`; `docker compose down` stops it (`-v` also wipes its data) |
+| Phone | USB, authorized, `adb reverse tcp:8000 tcp:8000` active | debug APK from commit `14ed4f0` installed, **signed in as `tech1@salymbekov.example.com`**, server address `http://localhost:8000` |
+
+**The dev database is dirty.** About 130 extra requests (nearly all canceled probes with titles like "Edge case
+probe", "Lifecycle probe request", "DOCKER …"), 3 public test notes on REQ-00023 (`SWEEP-…`, the API cannot delete
+notes), a few probe inventory items (`ZZPROBE…`, deactivated), two generated maintenance requests, and several
+"Live check from the Dart client" notes. Reset before demonstrating:
+`cd backend && uv run python -m app.cli reset-db --yes-destroy-local-data`, then restart the API (and sign the
+phone back in). The Docker stack's database is separate and nearly clean — it can serve as the demo environment instead.
+
+**Gotchas learned the hard way**
+* `python` in this shell is the Microsoft Store stub; use `uv run python` (backend) or `node` for scripts.
+* Git Bash rewrites `/sdcard/...`-style arguments; set `MSYS_NO_PATHCONV=1` for `adb shell`. Kill process trees
+  with `taskkill //PID <pid> //T //F`; use PowerShell (`Get-NetTCPConnection`, `Get-CimInstance Win32_Process`) to
+  find what owns a port.
+* The API does not reload; restart it after backend changes. Backend tests need `TEST_DATABASE_URL` (database name
+  ending in `_test`) and drop/rebuild that database every run.
+* Sign-in is rate limited (5 failures per email in 15 minutes → 429): do not hammer demo accounts.
+* `docker compose --progress=plain up …` — `--progress` is a top-level flag and goes before `up`.
+* Next 16 writes dev output to `.next/dev` and builds to `.next`, so `bun run build` is safe next to `next dev`;
+  `next start` is unsupported with `output: "standalone"` (the image runs `node server.js`).
+* Mobile widget tests: file I/O needs `tester.runAsync`, and the connectivity plugin must be stubbed (see
+  `mobile/test/offline_recovery_test.dart`).
+* The attack/probe scripts from the hardening round were throw-away files outside the repo and are gone; only the
+  regression tests remain. Turning them into a repeatable script would be a cheap improvement.
+
+**Do next, in this order:** (1) reset the dev data (or pick the Docker stack) → (2) walk the remaining phone flows
+on the fresh seed (Accept/Start/Complete, photos, offline photo, reassignment while offline) → (3) record the demo
+video and replace the README placeholder → (4) submission mechanics. Details and the longer wish-list are in "What
+is left to do" below.
 
 ## What the project is
 

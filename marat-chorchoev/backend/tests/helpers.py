@@ -1,6 +1,7 @@
 """Small builders shared by the API tests."""
 
 import io
+import itertools
 import uuid
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -10,6 +11,7 @@ from PIL import Image
 from tests.conftest import Member, OrgFixture, World
 
 TZ = ZoneInfo("Asia/Bishkek")
+_counter = itertools.count(1)
 
 
 def cmd() -> str:
@@ -52,6 +54,8 @@ def request_body(org: OrgFixture, **overrides) -> dict:
 async def create_request(
     world: World, org: OrgFixture, requester: Member | None = None, **overrides
 ) -> dict:
+    # Each helper call gets its own title: identical open requests are collapsed by the API.
+    overrides.setdefault("title", f"Air handler is making noise #{next(_counter)}")
     return await world.ok(
         requester or org.requester, "POST", "/requests", json=request_body(org, **overrides)
     )

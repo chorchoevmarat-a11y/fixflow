@@ -380,6 +380,27 @@ async def test_reclassify_requires_reason_and_is_audited(world: World) -> None:
         assert event.before["priority"] == "LOW" and event.after["reason"] == "Safety risk"
 
 
+async def test_identical_open_request_is_not_created_twice(world: World) -> None:
+    a = world.a
+    first = await create_request(world, a, title="Air handler is making noise")
+    again = await world.post(
+        a.requester, "/requests", request_body(a, title="  AIR handler is making  noise ")
+    )
+    assert again.status_code == 200
+    assert again.json()["id"] == first["id"] and again.json()["deduplicated"] is True
+    listing = await world.ok(a.dispatcher, "GET", "/requests", params={"q": "noise"})
+    assert listing["total"] == 1
+    # A different wording is still a new request.
+    other = await create_request(world, a, title="Air handler noise is worse now")
+    assert other["id"] != first["id"]
+    # Once the first one is canceled, the same text may be filed again.
+    await world.ok(
+        a.requester, "POST", f"/requests/{first['id']}/cancel", json={"reason": "Filed by mistake"}
+    )
+    fresh = await create_request(world, a, title="Air handler is making noise")
+    assert fresh["id"] != first["id"]
+
+
 async def test_duplicate_link_is_kept(world: World) -> None:
     a = world.a
     original = await create_request(world, a)
@@ -429,27 +450,6 @@ async def test_disabled_category_and_unauthorized_property_are_rejected(world: W
     assert mismatch.status_code == 422 and error_code(mismatch) == "ASSET_NOT_ALLOWED"
 
 
-async def test_preferred_visit_must_be_in_the_future(world: World) -> None:
-    from datetime import timedelta
-
-    from app.models.base import utcnow
-    from tests.helpers import error_code, request_body
-
-    org = world.a
-    now = utcnow()
-
-    def payload(start, end):
-        return request_body(
-            org, preferred_start_at=start.isoformat(), preferred_end_at=end.isoformat()
-        )
-
-    past = await world.call(
-        org.requester,
-        "POST",
-        "/requests",
-        json=payload(now - timedelta(days=60), now - timedelta(days=59)),
-        headers={"Idempotency-Key": "past-visit-key-1"},
-    )
 async def test_requesters_only_see_and_use_their_own_campus(world: World) -> None:
     """A requester from one campus (e.g. AIT) cannot see or file for another (e.g. SU)."""
     a = world.a
@@ -490,6 +490,27 @@ async def test_requesters_only_see_and_use_their_own_campus(world: World) -> Non
     assert (await world.post(a.requester, "/requests", own)).status_code == 201
 
 
+async def test_preferred_visit_must_be_in_the_future(world: World) -> None:
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from tests.helpers import error_code, request_body
+
+    org = world.a
+    now = utcnow()
+
+    def payload(start, end):
+        return request_body(
+            org, preferred_start_at=start.isoformat(), preferred_end_at=end.isoformat()
+        )
+
+    past = await world.call(
+        org.requester,
+        "POST",
+        "/requests",
+        json=payload(now - timedelta(days=60), now - timedelta(days=59)),
+        headers={"Idempotency-Key": "past-visit-key-1"},
+    )
     assert past.status_code == 422
     assert error_code(past) == "PREFERRED_INTERVAL_IN_PAST"
 

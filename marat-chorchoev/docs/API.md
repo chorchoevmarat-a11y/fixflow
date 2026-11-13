@@ -28,7 +28,7 @@ machine-readable `/api/v1/openapi.json`.
 | Properties / assets | `GET·POST /properties`, `PATCH /properties/{id}`, `GET·POST /assets`, `GET·PATCH /assets/{id}`, `GET /assets/{id}/history` |
 | Categories / skills | `GET·POST /categories`, `PATCH /categories/{id}`, `GET·POST /skills`, `DELETE /skills/{id}` |
 | Technicians / availability | `GET /technicians`, `GET /technicians/me`, `PUT /technicians/{id}` (skills, weekly hours), `POST·DELETE /technicians/{id}/time-off[/{id}]`, `GET /schedule` |
-| Requests / lifecycle | `GET·POST /requests`, `GET /requests/{id}`, `GET /requests/{id}/activity`; transitions `triage`, `reclassify`, `duplicate`, `assign`, `reschedule`, `unassign`, `accept`, `decline`, `start`, `block`, `unblock`, `complete`, `close`, `reopen`, `cancel`, `feedback` (all `POST /requests/{id}/<name>`) |
+| Requests / lifecycle | `GET·POST /requests` (re-sending an identical open request returns the original with `200` and `"deduplicated": true` instead of creating another),  `GET /requests/{id}`, `GET /requests/{id}/activity`; transitions `triage`, `reclassify`, `duplicate`, `assign`, `reschedule`, `unassign`, `accept`, `decline`, `start`, `block`, `unblock`, `complete`, `close`, `reopen`, `cancel`, `feedback` (all `POST /requests/{id}/<name>`) |
 | Assignment helpers | `GET /requests/{id}/candidates?start_at&end_at`, `GET /requests/{id}/suggestions` (smart slot finder) |
 | Estimates / approvals | `GET /estimates`, `GET·POST /requests/{id}/estimates`, `PUT·DELETE /estimates/{id}`, `POST /estimates/{id}/submit·approve·reject·withdraw` |
 | Inventory / usage | `GET·POST /inventory`, `PATCH /inventory/{id}`, `POST /inventory/{id}/stock-additions`, `GET /inventory/{id}/movements`, `GET·POST /requests/{id}/materials` |
@@ -47,12 +47,12 @@ The examples use the disposable demo accounts from the README.
 
 ```bash
 curl -s -X POST localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' \
-  -d '{"email":"requester1@alatoo.example.com","password":"FixFlow-Demo-2026!"}'
+  -d '{"email":"requester1@salymbekov.example.com","password":"FixFlow-Demo-2026!"}'
 ```
 ```json
 { "access_token": "…", "token_type": "bearer", "expires_at": "2026-11-14T03:00:00+00:00",
-  "user": {"id": "…", "email": "requester1@alatoo.example.com", "full_name": "Cholpon Ismailova"},
-  "memberships": [{"membership_id": "…", "organization_id": "0681d9b4-…", "organization_name": "Ala-Too Facility Services",
+  "user": {"id": "…", "email": "requester1@salymbekov.example.com", "full_name": "Cholpon Ismailova"},
+  "memberships": [{"membership_id": "…", "organization_id": "0681d9b4-…", "organization_name": "Salymbekov University Facilities",
                    "timezone": "Asia/Bishkek", "currency": "KGS", "role": "REQUESTER", "technician_id": null}] }
 ```
 

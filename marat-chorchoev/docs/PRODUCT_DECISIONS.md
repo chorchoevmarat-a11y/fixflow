@@ -26,7 +26,7 @@ a one-click **Book this** button.
 
 **Verification.** `backend/tests/test_scheduling_inventory.py::test_smart_slot_suggestions_are_bookable`
 books the top suggestion through the real endpoint and checks that suggestions are refused for non-triaged
-requests. In the browser: sign in as `dispatcher@alatoo.example.com`, open the "Collision candidate" request
+requests. In the browser: sign in as `dispatcher@salymbekov.example.com`, open the "Collision candidate" request
 (REQ-00044) — the preferred slot is already taken by Farid, so the finder proposes Ilyas Mamytov for that
 time instead, plus later alternatives.
 
@@ -59,3 +59,11 @@ time instead, plus later alternatives.
    "sending…" for a moment instead of an immediate server response.
 8. **Materials and lifecycle actions are online-only on mobile.** Stock is shared and must never be decremented
    from a stale local copy; the UI says why a button is disabled offline instead of faking success.
+9. **Spam guard: an identical open request is never filed twice.** If a requester submits a request with the
+   same property, asset, category, title and description (compared ignoring case and extra spaces) as one of
+   their own requests that is still open (anything except COMPLETED, CLOSED or CANCELED), the API returns that
+   original request with `200` and `"deduplicated": true` instead of creating a new one, so dispatchers see a
+   single entry rather than a pile of repeats from double-sends, impatient re-submits or retries. Once the
+   original is finished or canceled, the same text can be filed again. Cost: a requester cannot deliberately
+   file the exact same text twice while the first is open (they should reword it or add detail); near-identical
+   wording from different people is still handled by the dispatcher's manual "duplicate" link.

@@ -160,10 +160,42 @@ async def _category_for_use(db: AsyncSession, ctx: Ctx, category_id: uuid.UUID) 
     return category
 
 
+def _norm(column: Any) -> Any:
+    """Case- and whitespace-insensitive form of a text column."""
+    return func.lower(func.trim(func.regexp_replace(column, r"\s+", " ", "g")))
+
+
+def _norm_text(value: str) -> str:
+    return " ".join(value.split()).lower()
+
+
+async def _find_identical_open_request(
+    db: AsyncSession, ctx: Ctx, body: RequestCreate
+) -> ServiceRequest | None:
+    """An unfinished request by this requester with the same place, category and wording."""
+    return (
+        await db.execute(
+            select(R)
+            .where(
+                R.org_id == ctx.org_id,
+                R.requester_id == ctx.user.id,
+                R.property_id == body.property_id,
+                R.asset_id.is_(None) if body.asset_id is None else R.asset_id == body.asset_id,
+                R.category_id == body.category_id,
+                R.status.not_in([S.CLOSED, S.CANCELED, S.COMPLETED]),
+                _norm(R.title) == _norm_text(body.title),
+                _norm(R.description) == _norm_text(body.description),
+            )
+            .order_by(R.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 @router.post(
     "",
     status_code=201,
-    summary="Create a service request",
+    summary="Create a service request (an identical open one is returned instead, HTTP 200)",
     responses={422: {"description": "Validation failed or property/asset not allowed"}},
 )
 async def create_request(
@@ -221,6 +253,14 @@ async def create_request(
             )
         if asset.status == AssetStatus.RETIRED:
             raise Unprocessable("This asset is retired.", code="ASSET_RETIRED")
+
+    existing = await _find_identical_open_request(db, ctx, body)
+    if existing is not None:
+        # Spam guard: the same person re-sending the same open request gets the original back.
+        result = {**await svc.detail(db, ctx, existing), "deduplicated": True}
+        await idempotency.finish(db, ctx, "request.create", idempotency_key, 200, result)
+        await db.commit()
+        return JSONResponse(jsonable_encoder(result), status_code=200)
 
     number = await db.scalar(
         update(Organization)
