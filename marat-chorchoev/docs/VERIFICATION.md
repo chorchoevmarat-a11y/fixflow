@@ -3,8 +3,8 @@
 What was actually run while building this, what it printed, and what was **not** run.
 Environment: Windows 11, bash; PostgreSQL 16 (initially a throwaway 16.2 server process, from 13 Nov the Windows
 service `postgresql-x64-16`), uv 0.11.19 with Python 3.14.5, Bun 1.4.4, Node 26.13, Flutter 3.50.0 / Dart 3.14.0,
-Android SDK 35/36 + JDK 21 from Android Studio. Docker CLI 29.9.3 / Compose 5.7.0 are installed, but the engine
-was not running, so **nothing was run through Docker**.
+Android SDK 35/36 + JDK 21 from Android Studio, Docker Desktop 29.9.3 / Compose 5.7.0 (WSL2). Everything up to the
+last section was run natively; the Docker stack was first run on 13 Nov (see "Docker Compose" below).
 
 The sections below show the **latest** numbers (re-run on 13 Nov 2026 after the hardening round); the last section
 describes that round and what it found.
@@ -154,10 +154,32 @@ overflow.
 host's Windows `backend/.venv` (162 MB) over the image's Linux virtualenv and the host's `web/node_modules` over the
 image's — both added now.
 
+## Docker Compose (13 Nov 2026)
+
+Docker Desktop was started and the stack was run with `docker compose --progress=plain up --build -d` using a local,
+gitignored `.env` that moves the published ports (`DB_PORT=5433`, `API_PORT=8001`, `WEB_PORT=3001`) and sets
+`CORS_ORIGINS=http://localhost:3001`, `NEXT_PUBLIC_API_URL=http://localhost:8001`, `SEED_ON_START=1`, because a local
+PostgreSQL service and the dev servers occupy 5432/3000/8000.
+
+| Check | Result |
+| --- | --- |
+| First start | **Failed, a real defect:** the backend crashed in a loop with `unrecognized arguments: && exec uv run …` and the web container never started. The `Dockerfile` `CMD` put `&&` inside `${SEED_ON_START:+…}`, which the shell passes to `app.cli seed` as a literal argument — so the documented `SEED_ON_START=1 docker compose up` never worked. Fixed with an `if [ -n "$SEED_ON_START" ]; then …; fi`; the health check start period was raised from 40 s to 120 s to cover the first-start seed. |
+| Second start | db, backend and web up; migrations applied; seed printed `done. 11 overdue request(s) escalated`; 4 uvicorn workers; `/api/v1/health/ready` → `{"status":"ok","database":"up","schema_revision":"0001"}` |
+| `scripts/smoke.sh` against the container API | **SMOKE PASSED** (lifecycle plus the expected 403/404/409/401) |
+| Roles | admin, dispatcher, requester, technician, other-organization admin and the two-organization account all sign in; the dispatcher sees the seeded requests and the dashboard |
+| Image contents | the image has the current code: `no-store`/`nosniff` headers, NUL → 422, `%` search matches nothing |
+| CORS | allows `http://localhost:3001` (the web container), not `http://localhost:3000` |
+| Uploads volume | a seeded evidence image is served (`image/png`, 4554 bytes) |
+| Web container in a browser | sign-in as dispatcher, dashboard with the seeded data (40 open, 10 overdue), all API calls to `:8001`, live stream connected, no console errors |
+| Persistence (E2E-10, containers only) | a request and an uploaded image created through the API survived `docker compose restart` (second start printed `demo data already present; nothing to do`; the event listener logged a disconnect when PostgreSQL restarted and reconnected) and a full `docker compose down` followed by `up -d` (volumes kept); no duplicate seed data |
+
+Not done: the default ports on a clean machine, the Android app against the container API, restarting the *phone* during
+E2E-10, and a Windows-free (Linux) build host.
+
 ## Not run
 
-* `docker compose up` / image builds: the CLI is installed but the engine was not running. The web runtime was
-  checked without Docker (see Web); the backend image's start command and health check were not.
+* Docker Compose on the default ports / from a clean checkout, and the Android app against the container API (the
+  stack itself was run, see "Docker Compose").
 * On the phone: camera/gallery photos and the offline photo queue, Accept/Start/Decline/Block/Complete,
   reassignment while offline (E2E-05), marking notifications read, large font sizes.
 * E2E-10 (restart of every service and the app, then re-check); keyboard-only and screen-reader passes on the web app.

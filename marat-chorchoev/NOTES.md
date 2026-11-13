@@ -73,7 +73,10 @@ sweep of it on a physical Android phone. Everything found was fixed and has a re
   dependency); the app could not get back online after a server outage on working Wi-Fi (Refresh was disabled
   while "offline"); "Upcoming appointments" listed past ones.
 * *Docker:* added `backend/.dockerignore` and `web/.dockerignore`; without them `COPY . .` would copy the host's
-  Windows `.venv` and `node_modules` into the images.
+  Windows `.venv` and `node_modules` into the images. **Running the stack found that the backend image crashed on
+  start whenever `SEED_ON_START` was set** (a `&&` inside a `${VAR:+...}` expansion was passed to the seed command as
+  an argument), so the documented `SEED_ON_START=1 docker compose up` never worked; the `CMD` now uses an `if`,
+  and the health check's start period is 120 s to cover the first-start seed.
 
 **Quality** — 52 backend tests (real PostgreSQL, concurrency races), 16 web tests, 32 mobile tests, lint/type
 checks everywhere, production web build, smoke test against a 2-worker server. Numbers and commands:
@@ -92,14 +95,16 @@ Must do before the deadline
    profile, online note, offline note → app killed → reconnect → exactly one note, Retry after a server outage,
    materials and completion validation, landscape. **Still to do:** camera/gallery photos and the offline photo
    queue, Accept/Start/Decline/Block/Complete against a fresh seed, and reassignment while offline → conflict (E2E-05).
-3. **Run the Docker stack.** Docker 29.9.3 / Compose 5.7.0 are installed, but the daemon was not running when this
-   was checked (start Docker Desktop first). Compose publishes ports 5432, 8000 and 3000 — the same ports local
-   development uses, and PostgreSQL runs here as an always-on Windows service. Stop the local API and web dev
-   server, and put `DB_PORT=5433` in `.env` (or stop the PostgreSQL service); the other ports can be overridden with
-   `API_PORT`/`WEB_PORT` (then also set `CORS_ORIGINS` to the web address). Then `SEED_ON_START=1 docker compose up --build -d`,
-   check `/api/v1/health/ready`, log in as each role, restart containers and confirm data/evidence survive (E2E-10).
-   The images have still never been built; the web runtime was verified without Docker by running
-   `node server.js` from the standalone output exactly as the image does.
+3. **Docker stack — done on 13 Nov, repeat before submitting.** Docker Desktop was started and
+   `docker compose --progress=plain up --build -d` built both images and ran the stack with demo data on **alternate
+   ports** (`.env`, gitignored: `DB_PORT=5433`, `API_PORT=8001`, `WEB_PORT=3001`, `CORS_ORIGINS=http://localhost:3001`,
+   `NEXT_PUBLIC_API_URL=http://localhost:8001`, `SEED_ON_START=1`), because the local PostgreSQL service and the dev
+   servers use 5432/3000/8000. Results: all three containers healthy, `scripts/smoke.sh` passes against it, all six
+   demo roles sign in, the seeded evidence image is served from the uploads volume, CORS matches the web origin, the
+   web app works in a browser, and a request plus an uploaded image survive both `docker compose restart` and
+   `docker compose down` + `up` (no duplicate seeding). Not done: pointing the phone at the container API, and a run
+   with the default ports on a clean machine. To run it again: `docker compose up -d` (add `--build` after code
+   changes); `docker compose down -v` wipes the stack's data.
 4. **Submission mechanics:** accept the repo invitation (opens 16:00 Sunday), create folder `<name-surname>/`,
    branch `submission/<name-surname>`, copy the project in (no nested git repo), PR titled
    `FixFlow: Name Surname` with links to the README, video and what is/isn't implemented. Do not merge it.
@@ -153,5 +158,6 @@ Demo password for all seeded accounts: see `README.md` (disposable, demo-only).
   `fixflow` and the databases `fixflow` (the app) and `fixflow_test` (the tests; it is dropped and rebuilt by every
   run). The original build used a throwaway PostgreSQL 16.2 instead. Provide your own with `TEST_DATABASE_URL`
   (database name must end in `_test`).
-* Docker CLI and Compose are installed; Docker Desktop's engine was not running when checked (see item 3 above).
+* Docker Desktop (Docker 29.9.3, Compose 5.7.0, WSL2 backend) is installed; start it from the Start menu before using
+  `docker compose`. The container stack, if left running, publishes 5433/8001/3001 (see item 3 above).
 * In Git Bash, `adb shell` arguments starting with `/` are rewritten to Windows paths; use `MSYS_NO_PATHCONV=1`.

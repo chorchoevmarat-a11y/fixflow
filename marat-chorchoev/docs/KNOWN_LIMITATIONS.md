@@ -16,12 +16,12 @@ This document is deliberately blunt. Nothing listed under "Not done" or "Not ver
 
 ## Not verified (written, but not exercised in the authoring environment)
 
-* **`docker compose up`** and the two Dockerfiles were never run: the Docker CLI and Compose are installed on the
-  authoring machine, but the engine (Docker Desktop) was not running when this was checked. The backend image's
-  start command, health checks and both image builds are untested. The same code paths were run natively (API with
-  2 workers on PostgreSQL 16, `next build`, and the web standalone output started with `node server.js` exactly as
-  the image does). A static review found that neither build context had a `.dockerignore`, so `COPY . .` would have
-  copied the host's Windows virtualenv and `node_modules` into the images; both files were added but never exercised.
+* **Docker Compose was run once, on alternate ports.** Both images build and the stack starts, seeds, passes
+  `scripts/smoke.sh`, and keeps its data across a restart and a `down`/`up` (details in `docs/VERIFICATION.md`). The
+  first attempt failed: the backend image crashed on start whenever `SEED_ON_START` was set (fixed in the
+  `Dockerfile`). Not verified: the default ports 5432/8000/3000 (they were taken by local services), a build on a
+  Linux or clean machine, and the Android app against the container API. `.dockerignore` files were added after a
+  review showed `COPY . .` would copy the host's Windows virtualenv and `node_modules` into the images.
 * **The Android app was only partly walked through on a device.** The debug APK was installed on one physical
   phone (USB, `adb reverse tcp:8000 tcp:8000`, server address `http://localhost:8000`) and driven through sign-in,
   sign-out, jobs, inbox, availability, profile, an online note, an offline note → app killed → reconnect → exactly

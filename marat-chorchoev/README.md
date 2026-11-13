@@ -23,7 +23,7 @@ Android app that all use the same live records.
 | Web app (requester, dispatcher, admin workspaces, dashboard, charts, schedule board) | Implemented; 16 automated tests; browser-checked as dispatcher and requester (staff, maintenance and organization-settings screens not yet) |
 | **Original feature: Smart slot finder** (see `docs/PRODUCT_DECISIONS.md`) | Implemented, tested |
 | Android app: sign-in, jobs, detail, notes + photos offline queue, conflicts, materials, availability, inbox | Implemented; 32 automated tests; **run on one physical phone** (sign-in/out, jobs, offline note queue); photo flows and job state changes **not yet walked through on a device** |
-| Docker Compose stack | Written; **never executed** (the Docker CLI is installed, its engine was not running; see `docs/KNOWN_LIMITATIONS.md`) |
+| Docker Compose stack | Implemented; **run on 13 Nov 2026**: both images build, the stack starts and seeds, `scripts/smoke.sh` passes against it, data and uploads survive a restart and a `down`/`up` (on alternate ports; see `docs/VERIFICATION.md`) |
 | Demo video | **Not done** |
 
 Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
@@ -32,7 +32,7 @@ Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATION
 
 | Tool | Version used | Needed for |
 | --- | --- | --- |
-| Docker + Compose v2 | CLI 29.9.3 / Compose 5.7.0 installed; the engine was **not running** when checked, so the stack was never executed | one-command stack |
+| Docker + Compose v2 | Docker 29.9.3 / Compose 5.7.0 (Docker Desktop, WSL2 backend) | one-command stack |
 | [uv](https://docs.astral.sh/uv/) | 0.11.19 | Python env (Python ≥ 3.13; tested on 3.14.5) |
 | PostgreSQL | 16 (tests ran on 16.2, later the Windows service `postgresql-x64-16`) | database |
 | [Bun](https://bun.sh) | 1.4.4 | web install/scripts |
@@ -55,7 +55,11 @@ curl http://localhost:8000/api/v1/health/ready  # {"status":"ok",...}
 | OpenAPI (Swagger) | http://localhost:8000/api/v1/docs |
 | PostgreSQL | localhost:5432 (user/db `fixflow`) |
 
-Ports and credentials can be overridden through `.env` (`WEB_PORT`, `API_PORT`, `DB_PORT`, `POSTGRES_*`).
+Ports and credentials can be overridden through `.env` (`WEB_PORT`, `API_PORT`, `DB_PORT`, `POSTGRES_*`). If something
+on this machine already uses 5432/8000/3000 (a local PostgreSQL, the dev servers), pick other ports and keep the
+browser-visible addresses consistent, e.g. `DB_PORT=5433 API_PORT=8001 WEB_PORT=3001
+CORS_ORIGINS=http://localhost:3001 NEXT_PUBLIC_API_URL=http://localhost:8001` (the web build bakes in
+`NEXT_PUBLIC_API_URL`, so changing it needs `--build`).
 Startup needs no manual sleeps: the backend waits for PostgreSQL, applies Alembic migrations, then serves
 with 4 workers; `web` starts after the backend reports ready. Data lives in the `postgres_data` and
 `uploads_data` volumes and survives `docker compose stop/start`.
