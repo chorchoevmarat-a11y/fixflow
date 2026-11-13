@@ -15,7 +15,7 @@ function row(id: string, reference: string, title: string, status: RequestRow["s
     updated_at: "2026-11-10T05:00:00Z",
     completed_at: null,
     requester_name: "Cholpon",
-    property: { id: "p1", name: "Manas Tower", address: "101 Manas Avenue" },
+    property: { id: "p1", name: "Main Academic Building", address: "Salymbekov University main campus" },
     category: { id: "c1", name: "HVAC" },
     asset_id: null,
     assignment: null,

@@ -12,7 +12,7 @@ Future<void> main(List<String> args) async {
   String? org;
   final api = HttpFixflowApi(baseUrl: base, token: () => token, orgId: () => org);
 
-  final login = await api.login('tech1@alatoo.example.com', 'FixFlow-Demo-2026!');
+  final login = await api.login('tech1@salymbekov.example.com', 'FixFlow-Demo-2026!');
   token = login.token;
   org = login.memberships.first.organizationId;
   stdout.writeln('login ok: ${login.fullName}, role ${login.memberships.first.role}');

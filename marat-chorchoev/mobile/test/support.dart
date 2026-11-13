@@ -19,8 +19,8 @@ Map<String, dynamic> jobJson({
       'description': 'The rooftop unit rattles loudly whenever the fan starts.',
       'property': {
         'id': 'p1',
-        'name': 'Manas Business Tower',
-        'address': '101 Manas Avenue, Bishkek',
+        'name': 'Main Academic Building',
+        'address': 'Salymbekov University main campus, Bishkek',
         'contact_instructions': 'Security desk, floor 1'
       },
       'asset': {

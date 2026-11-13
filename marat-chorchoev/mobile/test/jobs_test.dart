@@ -15,7 +15,7 @@ void main() {
 
     expect(find.textContaining('REQ-00042'), findsOneWidget);
     expect(find.textContaining('Air handler is noisy'), findsOneWidget);
-    expect(find.textContaining('Manas Business Tower'), findsOneWidget);
+    expect(find.textContaining('Main Academic Building'), findsOneWidget);
     expect(find.textContaining('AHU-001'), findsOneWidget);
     expect(find.text('Scheduled'), findsOneWidget);
     expect(find.text('High priority'), findsOneWidget);

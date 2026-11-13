@@ -23,15 +23,15 @@ expect "liveness" 200 "$(status "$API/health/live")"
 expect "readiness" 200 "$(status "$API/health/ready")"
 
 echo "== sign in =="
-req_login=$(login requester1@alatoo.example.com)
+req_login=$(login requester1@salymbekov.example.com)
 REQ_TOKEN=$(echo "$req_login" | json "d.access_token")
 ORG_A=$(echo "$req_login" | json "d.memberships[0].organization_id")
-DISP_TOKEN=$(login dispatcher@alatoo.example.com | json "d.access_token")
-TECH_LOGIN=$(login tech1@alatoo.example.com)
+DISP_TOKEN=$(login dispatcher@salymbekov.example.com | json "d.access_token")
+TECH_LOGIN=$(login tech1@salymbekov.example.com)
 TECH_TOKEN=$(echo "$TECH_LOGIN" | json "d.access_token")
 TECH_ID=$(echo "$TECH_LOGIN" | json "d.memberships[0].technician_id")
-ORG_B=$(login admin@issykkul.example.com | json "d.memberships[0].organization_id")
-B_TOKEN=$(login admin@issykkul.example.com | json "d.access_token")
+ORG_B=$(login admin@salymbekov-hospital.example.com | json "d.memberships[0].organization_id")
+B_TOKEN=$(login admin@salymbekov-hospital.example.com | json "d.access_token")
 pass "signed in as requester, dispatcher, technician, other-org admin"
 
 call() { # token org method path [data]

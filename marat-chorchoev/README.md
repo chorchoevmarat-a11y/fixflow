@@ -156,6 +156,13 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
   If only the server was unreachable (Wi-Fi stayed on), no network event fires: tap **Retry** in the offline
   banner (or pull to refresh) and the queue is sent.
 
+## Design
+
+The web and Android interfaces share one visual style: a true-black background, near-black rounded cards
+with hairline borders, bold titles, spaced uppercase labels and a single blue accent. This look is **inspired by
+the Salymbekov University student app**, so the facilities platform feels familiar to students and staff.
+The web styles live in `web/src/app/globals.css` and the Android theme in `mobile/lib/ui/theme.dart`.
+
 ## Tests and checks
 
 ```bash

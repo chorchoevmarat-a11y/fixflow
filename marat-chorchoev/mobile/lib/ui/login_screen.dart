@@ -72,7 +72,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Text('FixFlow',
                         style: Theme.of(context).textTheme.headlineLarge),
                     const SizedBox(height: 4),
-                    const Text('Technician sign-in'),
+                    const Text('Salymbekov University · Technician sign-in'),
                     const SizedBox(height: 16),
                     if (session.expired)
                       const Card(
@@ -158,7 +158,7 @@ class _OrganizationPicker extends ConsumerWidget {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-              'You work for more than one organization. Pick one; you can switch later from Profile.'),
+              'You work for more than one Salymbekov University unit. Pick one; you can switch later from Profile.'),
           const SizedBox(height: 12),
           for (final m in session.memberships)
             Card(

@@ -63,7 +63,7 @@ export default function LoginPage() {
     <main className="login-wrap">
       <div className="card login-card">
         <h1>FixFlow</h1>
-        <p className="muted">Sign in to your service organization.</p>
+        <p className="muted">Salymbekov University facilities. Sign in with your university account.</p>
         {choice ? (
           <form
             className="stack"
