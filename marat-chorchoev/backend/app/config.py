@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     MAX_IMAGE_SIDE: int = 10_000
     MAX_INTAKE_IMAGES: int = 3
 
+    # Canceled requests drop out of the default request list this many minutes after cancellation.
+    # They are hidden, not deleted: history, audit trail and SLA outcome are kept (LIFE/SLA specs).
+    CANCELED_HIDE_AFTER_MINUTES: int = 5
+
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 

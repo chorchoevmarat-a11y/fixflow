@@ -4,6 +4,8 @@ export interface RequestFormValues {
   category_id: string;
   property_id: string;
   priority: string;
+  preferred_start_at?: string;
+  preferred_end_at?: string;
 }
 
 export type Errors = Record<string, string>;
@@ -21,6 +23,17 @@ export function validateRequestForm(v: RequestFormValues): Errors {
   else if (description.length > 3000) errors.description = "Description must be at most 3,000 characters.";
   if (!v.category_id) errors.category_id = "Choose a category.";
   if (!v.property_id) errors.property_id = "Choose a property.";
+  const start = v.preferred_start_at ? new Date(v.preferred_start_at).getTime() : null;
+  const end = v.preferred_end_at ? new Date(v.preferred_end_at).getTime() : null;
+  if (start !== null && Number.isNaN(start)) errors.preferred_start_at = "Enter a valid date and time.";
+  if (end !== null && Number.isNaN(end)) errors.preferred_end_at = "Enter a valid date and time.";
+  if (!errors.preferred_start_at && !errors.preferred_end_at) {
+    const latest = end ?? start;
+    if (start !== null && end !== null && end <= start) errors.preferred_end_at = "Must end after the start.";
+    else if (latest !== null && latest <= Date.now()) {
+      errors[end !== null ? "preferred_end_at" : "preferred_start_at"] = "Choose a date and time in the future.";
+    }
+  }
   return errors;
 }
 

@@ -314,7 +314,8 @@ textarea {
   font-size: 0.82rem;
   margin: 0;
 }
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: auto;
   min-height: 0;
 }

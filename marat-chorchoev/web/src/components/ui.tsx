@@ -222,12 +222,17 @@ export function Modal({
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal?.();
+    if (open && !dialog.open) {
+      // The `open` attribute must NOT be rendered by React, or showModal() is skipped and the
+      // dialog appears as a plain in-flow box (no backdrop, no centering, no focus trap).
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", ""); // jsdom / very old browsers
+    }
     if (!open && dialog.open) dialog.close?.();
   }, [open]);
   if (!open) return null;
   return (
-    <dialog ref={ref} className="modal" aria-labelledby="modal-title" onClose={onClose} onCancel={onClose} open>
+    <dialog ref={ref} className="modal" aria-labelledby="modal-title" onClose={onClose} onCancel={onClose}>
       <h2 id="modal-title">{title}</h2>
       {children}
     </dialog>

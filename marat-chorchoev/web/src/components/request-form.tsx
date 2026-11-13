@@ -73,7 +73,7 @@ export function RequestForm() {
   function submit(event: FormEvent) {
     event.preventDefault();
     if (create.isPending) return;
-    const found = validateRequestForm(values);
+    const found = validateRequestForm({ ...values, preferred_start_at: prefStart, preferred_end_at: prefEnd });
     setErrors(found);
     if (Object.keys(found).length || fileError) return;
     create.mutate(undefined);
@@ -131,8 +131,8 @@ export function RequestForm() {
       </Card>
       <Card title="Preferred visit and photos (optional)">
         <div className="grid cols-2">
-          <TextField label="Preferred from" type="datetime-local" value={prefStart} onChange={(e) => setPrefStart(e.target.value)} />
-          <TextField label="Preferred until" type="datetime-local" value={prefEnd} onChange={(e) => setPrefEnd(e.target.value)} />
+          <TextField label="Preferred from" type="datetime-local" value={prefStart} onChange={(e) => setPrefStart(e.target.value)} error={err("preferred_start_at")} />
+          <TextField label="Preferred until" type="datetime-local" value={prefEnd} onChange={(e) => setPrefEnd(e.target.value)} error={err("preferred_end_at")} />
         </div>
         <div className="field" style={{ marginTop: "0.75rem" }}>
           <label htmlFor="intake-images">Photos (up to 3)</label>

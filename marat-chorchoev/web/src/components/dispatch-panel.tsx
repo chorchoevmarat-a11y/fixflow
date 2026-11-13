@@ -49,7 +49,10 @@ export function DispatchPanel({ request }: { request: RequestDetail }) {
       return api.post(
         `/requests/${request.id}/${path}`,
         { ...target, ...(canReschedule ? { reason: reason || null } : {}) },
-        { "Idempotency-Key": `${key}-${target.technician_id}-${target.start_at}` },
+        // Backend allows 8-100 chars: keep it short (prefix+uuid ≈ 43, + 8 + 13 ≈ 66).
+        {
+          "Idempotency-Key": `${key}-${target.technician_id.slice(0, 8)}-${new Date(target.start_at).getTime()}`,
+        },
       );
     },
     {

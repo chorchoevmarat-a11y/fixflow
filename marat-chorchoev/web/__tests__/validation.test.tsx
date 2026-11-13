@@ -26,6 +26,30 @@ describe("request validation rules", () => {
     expect(validateRequestForm({ ...valid, description: "y".repeat(3001) }).description).toMatch(/3,000/);
   });
 
+  it("rejects a preferred visit in the past or ending before it starts", () => {
+    const local = (ms: number) => new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+    const day = 86_400_000;
+    const past = validateRequestForm({
+      ...valid,
+      preferred_start_at: local(Date.now() - 60 * day),
+      preferred_end_at: local(Date.now() - 59 * day),
+    });
+    expect(past.preferred_end_at).toMatch(/future/);
+    const inverted = validateRequestForm({
+      ...valid,
+      preferred_start_at: local(Date.now() + 3 * day),
+      preferred_end_at: local(Date.now() + 2 * day),
+    });
+    expect(inverted.preferred_end_at).toMatch(/after the start/);
+    expect(
+      validateRequestForm({
+        ...valid,
+        preferred_start_at: local(Date.now() + 2 * day),
+        preferred_end_at: local(Date.now() + 3 * day),
+      }),
+    ).toEqual({});
+  });
+
   it("requires a category and a property", () => {
     const errors = validateRequestForm({ ...valid, category_id: "", property_id: "" });
     expect(errors.category_id).toBeDefined();

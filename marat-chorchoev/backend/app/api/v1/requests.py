@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import Body, CommandId, Quantity, Reason
 from app.api.v1.catalog import usable_property_clause
+from app.config import settings
 from app.core.deps import DB, Ctx, CurrentCtx, RequesterCtx, StaffCtx, TechnicianCtx
 from app.core.errors import Conflict, Forbidden, Unprocessable
 from app.core.security import payload_hash
@@ -184,6 +185,11 @@ async def create_request(
         raise Unprocessable(
             "Preferred visit must end after it starts.", code="PREFERRED_INTERVAL_INVALID"
         )
+    latest_preferred = body.preferred_end_at or body.preferred_start_at
+    if latest_preferred is not None and latest_preferred <= utcnow():
+        raise Unprocessable(
+            "Preferred visit must be in the future.", code="PREFERRED_INTERVAL_IN_PAST"
+        )
     await _category_for_use(db, ctx, body.category_id)
     prop = (
         await db.execute(
@@ -277,14 +283,22 @@ async def list_requests(
     now = utcnow()
     query = svc.list_query(ctx)
     if q:
-        like = f"%{q.strip()}%"
         digits = "".join(ch for ch in q if ch.isdigit())
-        conditions = [R.title.ilike(like), Property.address.ilike(like), Property.name.ilike(like)]
+        conditions = [
+            R.title.icontains(q.strip(), autoescape=True),
+            Property.address.icontains(q.strip(), autoescape=True),
+            Property.name.icontains(q.strip(), autoescape=True),
+        ]
         if digits and len(digits) <= 9:
             conditions.append(R.number == int(digits))
         query = query.where(or_(*conditions))
     if status:
         query = query.where(R.status.in_(status))
+    if not status or S.CANCELED not in status:
+        hide_before = now - timedelta(minutes=settings.CANCELED_HIDE_AFTER_MINUTES)
+        query = query.where(
+            or_(R.status != S.CANCELED, R.canceled_at.is_(None), R.canceled_at > hide_before)
+        )
     if open_only:
         query = query.where(R.status.not_in([S.CLOSED, S.CANCELED, S.COMPLETED]))
     if priority is not None:

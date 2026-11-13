@@ -308,8 +308,12 @@ async def list_staff(
     if is_active is not None:
         query = query.where(OrganizationMembership.is_active.is_(is_active))
     if q:
-        like = f"%{q}%"
-        query = query.where(or_(User.full_name.ilike(like), User.email.ilike(like)))
+        query = query.where(
+            or_(
+                User.full_name.icontains(q, autoescape=True),
+                User.email.icontains(q, autoescape=True),
+            )
+        )
     total = await count_rows(db, query)
     rows = await db.execute(
         query.order_by(User.full_name, User.id).offset(page.offset).limit(page.page_size)

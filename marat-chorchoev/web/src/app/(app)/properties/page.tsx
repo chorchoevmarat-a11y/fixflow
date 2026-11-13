@@ -6,19 +6,31 @@ import { AuthGuard } from "@/components/auth-guard";
 import { Button, Card, Empty, ErrorNote, Modal, PageHeader, Pagination, SelectField, Spinner, TextField } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import { useAction, useApiQuery } from "@/lib/hooks";
-import type { AssetItem, Page, PropertyItem } from "@/lib/types";
+import type { AssetItem, Page, PropertyItem, StaffMember } from "@/lib/types";
 
-function PropertyForm({ onDone }: { onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [instructions, setInstructions] = useState("");
+function PropertyForm({ existing, onDone }: { existing?: PropertyItem; onDone: () => void }) {
+  const [name, setName] = useState(existing?.name ?? "");
+  const [address, setAddress] = useState(existing?.address ?? "");
+  const [instructions, setInstructions] = useState(existing?.contact_instructions ?? "");
+  const [shared, setShared] = useState(existing?.is_shared ?? true);
+  const [selected, setSelected] = useState<string[]>(existing?.requesters?.map((r) => r.membership_id) ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const create = useAction(() => api.post("/properties", { name: name.trim(), address: address.trim(), contact_instructions: instructions.trim() || null }), {
-    success: "Property created.",
-    onSuccess: onDone,
-    silentError: true,
-  });
-  const server = create.error instanceof ApiError ? create.error.fields : {};
+  const requesters = useApiQuery<Page<StaffMember>>("/staff", { role: "REQUESTER", is_active: true, page_size: 100 });
+  const save = useAction(
+    () => {
+      const body = {
+        name: name.trim(),
+        address: address.trim(),
+        contact_instructions: instructions.trim() || null,
+        is_shared: shared,
+        requester_membership_ids: shared ? [] : selected,
+      };
+      return existing ? api.patch(`/properties/${existing.id}`, body) : api.post("/properties", body);
+    },
+    { success: existing ? "Property updated." : "Property created.", onSuccess: onDone, silentError: true },
+  );
+  const server = save.error instanceof ApiError ? save.error.fields : {};
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   return (
     <form
       className="stack"
@@ -27,20 +39,43 @@ function PropertyForm({ onDone }: { onDone: () => void }) {
         const found: Record<string, string> = {};
         if (name.trim().length < 2) found.name = "Name is required.";
         if (address.trim().length < 5) found.address = "Enter the full address.";
+        if (!shared && selected.length === 0) found.access = "Pick at least one requester, or allow all requesters.";
         setErrors(found);
-        if (!Object.keys(found).length && !create.isPending) create.mutate(undefined);
+        if (!Object.keys(found).length && !save.isPending) save.mutate(undefined);
       }}
     >
       <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name ?? server.name} />
       <TextField label="Address" value={address} onChange={(e) => setAddress(e.target.value)} error={errors.address ?? server.address} />
       <TextField label="Contact instructions (optional)" value={instructions} onChange={(e) => setInstructions(e.target.value)} />
-      {create.error && !Object.keys(server).length ? <ErrorNote error={create.error} /> : null}
+      <fieldset className="field">
+        <legend>Who can file requests for this property?</legend>
+        <label>
+          <input type="radio" name="access" checked={shared} onChange={() => setShared(true)} /> All requesters in the organization
+        </label>
+        <label>
+          <input type="radio" name="access" checked={!shared} onChange={() => setShared(false)} /> Only selected requesters
+        </label>
+        {!shared ? (
+          <div className="stack" style={{ marginTop: "0.5rem" }}>
+            {requesters.isLoading ? <Spinner /> : null}
+            <ErrorNote error={requesters.error} />
+            {requesters.data?.items.map((r) => (
+              <label key={r.membership_id}>
+                <input type="checkbox" checked={selected.includes(r.membership_id)} onChange={() => toggle(r.membership_id)} /> {r.full_name}{" "}
+                <span className="muted small">{r.email}</span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+        {errors.access ? <p role="alert" className="error-text">{errors.access}</p> : null}
+      </fieldset>
+      {save.error && !Object.keys(server).length ? <ErrorNote error={save.error} /> : null}
       <div className="row end">
         <Button variant="secondary" onClick={onDone}>
           Cancel
         </Button>
-        <Button type="submit" loading={create.isPending}>
-          Create property
+        <Button type="submit" loading={save.isPending}>
+          {existing ? "Save changes" : "Create property"}
         </Button>
       </div>
     </form>
@@ -99,6 +134,7 @@ function PropertiesView() {
   const [q, setQ] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
   const [modal, setModal] = useState<"property" | "asset" | null>(null);
+  const [editing, setEditing] = useState<PropertyItem | null>(null);
   const properties = useApiQuery<Page<PropertyItem>>("/properties", { page: pageNo, page_size: 10, q, include_inactive: true });
   const allProps = useApiQuery<Page<PropertyItem>>("/properties", { page_size: 100 });
   const assets = useApiQuery<Page<AssetItem>>("/assets", { page: assetPage, page_size: 10, property_id: propertyFilter });
@@ -108,7 +144,7 @@ function PropertiesView() {
         title="Properties & assets"
         actions={
           <>
-            <Button onClick={() => setModal("property")}>Add property</Button>
+            <Button onClick={() => { setEditing(null); setModal("property"); }}>Add property</Button>
             <Button variant="secondary" disabled={!allProps.data?.items.length} onClick={() => setModal("asset")}>
               Add asset
             </Button>
@@ -129,6 +165,9 @@ function PropertiesView() {
                   <th>Address</th>
                   <th>Access</th>
                   <th>Assets</th>
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -146,6 +185,11 @@ function PropertiesView() {
                     </td>
                     <td>{p.is_shared ? "All requesters" : `Restricted (${p.requesters?.length ?? 0})`}</td>
                     <td>{p.asset_count}</td>
+                    <td>
+                      <Button small variant="secondary" onClick={() => { setEditing(p); setModal("property"); }}>
+                        Edit access
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -197,8 +241,8 @@ function PropertiesView() {
           {assets.data ? <Pagination page={assets.data.page} totalPages={assets.data.total_pages} total={assets.data.total} onChange={setAssetPage} /> : null}
         </Card>
       </div>
-      <Modal title="Add property" open={modal === "property"} onClose={() => setModal(null)}>
-        <PropertyForm onDone={() => setModal(null)} />
+      <Modal title={editing ? `Edit ${editing.name}` : "Add property"} open={modal === "property"} onClose={() => setModal(null)}>
+        {modal === "property" ? <PropertyForm key={editing?.id ?? "new"} existing={editing ?? undefined} onDone={() => setModal(null)} /> : null}
       </Modal>
       <Modal title="Add asset" open={modal === "asset"} onClose={() => setModal(null)}>
         <AssetForm properties={allProps.data?.items ?? []} onDone={() => setModal(null)} />

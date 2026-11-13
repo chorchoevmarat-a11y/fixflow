@@ -427,3 +427,85 @@ async def test_disabled_category_and_unauthorized_property_are_rejected(world: W
         a.requester2, "/requests", request_body(a, property_id=restricted["id"])
     )
     assert mismatch.status_code == 422 and error_code(mismatch) == "ASSET_NOT_ALLOWED"
+
+
+async def test_preferred_visit_must_be_in_the_future(world: World) -> None:
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from tests.helpers import error_code, request_body
+
+    org = world.a
+    now = utcnow()
+
+    def payload(start, end):
+        return request_body(
+            org, preferred_start_at=start.isoformat(), preferred_end_at=end.isoformat()
+        )
+
+    past = await world.call(
+        org.requester,
+        "POST",
+        "/requests",
+        json=payload(now - timedelta(days=60), now - timedelta(days=59)),
+        headers={"Idempotency-Key": "past-visit-key-1"},
+    )
+    assert past.status_code == 422
+    assert error_code(past) == "PREFERRED_INTERVAL_IN_PAST"
+
+    future = await world.call(
+        org.requester,
+        "POST",
+        "/requests",
+        json=payload(now + timedelta(days=2), now + timedelta(days=2, hours=2)),
+        headers={"Idempotency-Key": "future-visit-key-1"},
+    )
+    assert future.status_code == 201
+
+
+async def test_canceled_requests_leave_the_default_list_after_a_while(world: World) -> None:
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from app.models.base import utcnow
+    from app.models.models import ServiceRequest
+
+    a = world.a
+    created = await create_request(world, a)
+    rid = created["id"]
+    await world.ok(a.requester, "POST", f"/requests/{rid}/cancel", json={})
+
+    def ids(listing):
+        return [item["id"] for item in listing["items"]]
+
+    # Just canceled: still visible to the requester who owns it.
+    assert rid in ids(await world.ok(a.requester, "GET", "/requests"))
+
+    async with SessionLocal() as db:
+        await db.execute(
+            update(ServiceRequest)
+            .where(ServiceRequest.id == rid)
+            .values(canceled_at=utcnow() - timedelta(minutes=30))
+        )
+        await db.commit()
+
+    # Past the window: hidden from the default list for the requester and the dispatcher...
+    assert rid not in ids(await world.ok(a.requester, "GET", "/requests"))
+    assert rid not in ids(await world.ok(a.dispatcher, "GET", "/requests"))
+    # ...but not deleted: still reachable by filter and by id.
+    assert rid in ids(await world.ok(a.requester, "GET", "/requests?status=CANCELED"))
+    assert (await world.get(a.requester, f"/requests/{rid}")).status_code == 200
+
+
+async def test_search_treats_wildcards_as_literal_text(world: World) -> None:
+    a = world.a
+    await create_request(world, a)
+
+    everything = await world.ok(a.dispatcher, "GET", "/requests")
+    assert everything["total"] >= 1
+    for wildcard in ("%", "_", "\\"):
+        found = await world.ok(a.dispatcher, "GET", "/requests", params={"q": wildcard})
+        assert found["total"] == 0, f"{wildcard!r} must not match every row"
+        found = await world.ok(a.dispatcher, "GET", "/properties", params={"q": wildcard})
+        assert found["total"] == 0, f"{wildcard!r} must not match every property"

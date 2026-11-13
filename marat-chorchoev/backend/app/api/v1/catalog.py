@@ -303,8 +303,12 @@ async def list_properties(
     else:
         query = query.where(usable_property_clause(ctx))
     if q:
-        like = f"%{q}%"
-        query = query.where(or_(Property.name.ilike(like), Property.address.ilike(like)))
+        query = query.where(
+            or_(
+                Property.name.icontains(q, autoescape=True),
+                Property.address.icontains(q, autoescape=True),
+            )
+        )
     total = await count_rows(db, query)
     props = await db.scalars(
         query.order_by(Property.name, Property.id).offset(page.offset).limit(page.page_size)
@@ -459,9 +463,12 @@ async def list_assets(
     if status is not None:
         query = query.where(Asset.status == status)
     if q:
-        like = f"%{q}%"
         query = query.where(
-            or_(Asset.name.ilike(like), Asset.code.ilike(like), Asset.serial_number.ilike(like))
+            or_(
+                Asset.name.icontains(q, autoescape=True),
+                Asset.code.icontains(q, autoescape=True),
+                Asset.serial_number.icontains(q, autoescape=True),
+            )
         )
     total = await count_rows(db, query)
     rows = await db.execute(

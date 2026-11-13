@@ -106,8 +106,12 @@ async def list_items(
     if low_stock:
         query = query.where(InventoryItem.stock_quantity <= InventoryItem.reorder_threshold)
     if q:
-        like = f"%{q}%"
-        query = query.where(or_(InventoryItem.name.ilike(like), InventoryItem.code.ilike(like)))
+        query = query.where(
+            or_(
+                InventoryItem.name.icontains(q, autoescape=True),
+                InventoryItem.code.icontains(q, autoescape=True),
+            )
+        )
     total = await count_rows(db, query)
     items = await db.scalars(
         query.order_by(InventoryItem.name, InventoryItem.id)
