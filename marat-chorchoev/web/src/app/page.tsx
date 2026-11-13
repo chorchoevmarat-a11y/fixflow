@@ -1,24 +1,17 @@
-'use client'
+"use client";
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { getToken } from '@/lib/auth'
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { Spinner } from "@/components/ui";
+import { homeFor } from "@/lib/nav";
+import { currentMembership, useSession } from "@/lib/session";
 
-export default function RootPage() {
-  const router = useRouter()
-
+export default function Index() {
+  const router = useRouter();
+  const session = useSession();
   useEffect(() => {
-    const token = getToken()
-    if (token) {
-      router.replace('/dashboard')
-    } else {
-      router.replace('/login')
-    }
-  }, [router])
-
-  return (
-    <div className="flex h-screen w-full items-center justify-center">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-    </div>
-  )
+    const membership = currentMembership(session);
+    router.replace(membership ? homeFor(membership.role) : "/login");
+  }, [session, router]);
+  return <Spinner />;
 }

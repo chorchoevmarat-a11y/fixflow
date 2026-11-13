@@ -1,348 +1,133 @@
-import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import {
-  type Organization,
-  type User,
-  type ServiceRequest,
-  type Assignment,
-  type Note,
-  type Estimate,
-  type InventoryItem,
-  type InventoryTransaction,
-  type MaintenancePlan,
-  type Category,
-  type Property,
-  type Notification,
-  type AuditLog,
-  type DashboardStats,
-  type SmartDispatchSuggestion,
-  type PaginatedResponse,
-  type TokenResponse,
-} from '@/types'
-import { getToken, clearAuth } from '@/lib/auth'
+import { clearSession, getSession } from "./session";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+export const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+export const API = `${API_BASE}/api/v1`;
 
-export const apiClient = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
-  headers: { 'Content-Type': 'application/json' },
-})
+export interface FieldError {
+  field: string;
+  message: string;
+}
 
-// ─── Request interceptor: attach token + org id ───────────────────────────────
-apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = getToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  details: unknown;
+  requestId?: string;
+
+  constructor(status: number, code: string, message: string, details?: unknown, requestId?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+    this.requestId = requestId;
   }
-  const orgId =
-    typeof window !== 'undefined'
-      ? localStorage.getItem('fixflow_org_id')
-      : null
-  if (orgId) {
-    config.headers['X-Organization-ID'] = orgId
+
+  /** Server-side field errors keyed by field name. */
+  get fields(): Record<string, string> {
+    const list = (this.details as { fields?: FieldError[] } | undefined)?.fields ?? [];
+    return Object.fromEntries(list.map((f) => [f.field, f.message]));
   }
-  return config
-})
-
-// ─── Response interceptor: handle auth errors ─────────────────────────────────
-apiClient.interceptors.response.use(
-  (res) => res,
-  (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      clearAuth()
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login'
-      }
-    }
-    if (error.response?.status === 403) {
-      if (typeof window !== 'undefined') {
-        window.location.href = '/forbidden'
-      }
-    }
-    return Promise.reject(error)
-  },
-)
-
-// ─── Auth ─────────────────────────────────────────────────────────────────────
-
-export const authApi = {
-  login: (email: string, password: string) =>
-    apiClient.post<TokenResponse>('/auth/login', { email, password }).then((r) => r.data),
-
-  me: () => apiClient.get<User>('/auth/me').then((r) => r.data),
-
-  myOrganizations: () =>
-    apiClient.get<Organization[]>('/auth/organizations').then((r) => r.data),
-
-  logout: () => apiClient.post('/auth/logout').then((r) => r.data),
 }
 
-// ─── Requests ─────────────────────────────────────────────────────────────────
+type QueryValue = string | number | boolean | null | undefined | (string | number)[];
+export type Query = Record<string, QueryValue>;
 
-export interface RequestFilters {
-  status?: string
-  priority?: string
-  category_id?: string
-  property_id?: string
-  assignee_id?: string
-  search?: string
-  page?: number
-  per_page?: number
+export function buildQuery(query?: Query): string {
+  if (!query) return "";
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) value.forEach((v) => params.append(key, String(v)));
+    else params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
 }
 
-export const requestsApi = {
-  list: (filters?: RequestFilters) =>
-    apiClient
-      .get<PaginatedResponse<ServiceRequest>>('/requests', { params: filters })
-      .then((r) => r.data),
-
-  get: (id: string) =>
-    apiClient.get<ServiceRequest>(`/requests/${id}`).then((r) => r.data),
-
-  create: (data: Partial<ServiceRequest>) =>
-    apiClient.post<ServiceRequest>('/requests', data).then((r) => r.data),
-
-  update: (id: string, data: Partial<ServiceRequest>) =>
-    apiClient.patch<ServiceRequest>(`/requests/${id}`, data).then((r) => r.data),
-
-  triage: (id: string, data: { priority: string; category_id?: string; notes?: string }) =>
-    apiClient.post<ServiceRequest>(`/requests/${id}/triage`, data).then((r) => r.data),
-
-  close: (id: string, resolution: string) =>
-    apiClient
-      .post<ServiceRequest>(`/requests/${id}/close`, { resolution })
-      .then((r) => r.data),
-
-  cancel: (id: string, reason: string) =>
-    apiClient
-      .post<ServiceRequest>(`/requests/${id}/cancel`, { reason })
-      .then((r) => r.data),
-
-  addNote: (id: string, data: { content: string; is_internal: boolean }) =>
-    apiClient.post<Note>(`/requests/${id}/notes`, data).then((r) => r.data),
-
-  getNotes: (id: string) =>
-    apiClient.get<Note[]>(`/requests/${id}/notes`).then((r) => r.data),
-
-  getActivity: (id: string) =>
-    apiClient.get(`/requests/${id}/activity`).then((r) => r.data),
-
-  uploadAttachment: (id: string, file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return apiClient
-      .post(`/requests/${id}/attachments`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      .then((r) => r.data)
-  },
-
-  smartDispatch: (id: string) =>
-    apiClient
-      .get<SmartDispatchSuggestion[]>(`/requests/${id}/smart-dispatch`)
-      .then((r) => r.data),
+export interface RequestOptions {
+  body?: unknown;
+  form?: FormData;
+  query?: Query;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
-// ─── Assignments ──────────────────────────────────────────────────────────────
-
-export const assignmentsApi = {
-  create: (requestId: string, data: Partial<Assignment>) =>
-    apiClient
-      .post<Assignment>(`/requests/${requestId}/assignments`, data)
-      .then((r) => r.data),
-
-  list: (requestId: string) =>
-    apiClient
-      .get<Assignment[]>(`/requests/${requestId}/assignments`)
-      .then((r) => r.data),
-
-  update: (requestId: string, assignmentId: string, data: Partial<Assignment>) =>
-    apiClient
-      .patch<Assignment>(`/requests/${requestId}/assignments/${assignmentId}`, data)
-      .then((r) => r.data),
-
-  myAssignments: () =>
-    apiClient.get<Assignment[]>('/assignments/me').then((r) => r.data),
+function authHeaders(): Record<string, string> {
+  const session = getSession();
+  const headers: Record<string, string> = {};
+  if (session) {
+    headers.Authorization = `Bearer ${session.token}`;
+    if (session.orgId) headers["X-Organization-ID"] = session.orgId;
+  }
+  return headers;
 }
 
-// ─── Estimates ────────────────────────────────────────────────────────────────
-
-export const estimatesApi = {
-  get: (requestId: string) =>
-    apiClient.get<Estimate>(`/requests/${requestId}/estimate`).then((r) => r.data),
-
-  create: (requestId: string, data: Partial<Estimate>) =>
-    apiClient
-      .post<Estimate>(`/requests/${requestId}/estimate`, data)
-      .then((r) => r.data),
-
-  update: (requestId: string, data: Partial<Estimate>) =>
-    apiClient
-      .put<Estimate>(`/requests/${requestId}/estimate`, data)
-      .then((r) => r.data),
-
-  approve: (requestId: string) =>
-    apiClient
-      .post<Estimate>(`/requests/${requestId}/estimate/approve`)
-      .then((r) => r.data),
-
-  reject: (requestId: string, reason: string) =>
-    apiClient
-      .post<Estimate>(`/requests/${requestId}/estimate/reject`, { reason })
-      .then((r) => r.data),
+export async function raw(method: string, path: string, opts: RequestOptions = {}): Promise<Response> {
+  const headers: Record<string, string> = { ...authHeaders(), ...opts.headers };
+  let body: BodyInit | undefined;
+  if (opts.form) {
+    body = opts.form;
+  } else if (opts.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(opts.body);
+  }
+  try {
+    return await fetch(`${API}${path}${buildQuery(opts.query)}`, {
+      method,
+      headers,
+      body,
+      signal: opts.signal,
+      cache: "no-store",
+    });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") throw error;
+    throw new ApiError(0, "NETWORK_ERROR", "Cannot reach the server. Check your connection and try again.");
+  }
 }
 
-// ─── Inventory ────────────────────────────────────────────────────────────────
-
-export const inventoryApi = {
-  list: (params?: { search?: string; low_stock?: boolean }) =>
-    apiClient
-      .get<PaginatedResponse<InventoryItem>>('/inventory', { params })
-      .then((r) => r.data),
-
-  get: (id: string) =>
-    apiClient.get<InventoryItem>(`/inventory/${id}`).then((r) => r.data),
-
-  create: (data: Partial<InventoryItem>) =>
-    apiClient.post<InventoryItem>('/inventory', data).then((r) => r.data),
-
-  update: (id: string, data: Partial<InventoryItem>) =>
-    apiClient.patch<InventoryItem>(`/inventory/${id}`, data).then((r) => r.data),
-
-  transact: (id: string, data: Partial<InventoryTransaction>) =>
-    apiClient
-      .post<InventoryTransaction>(`/inventory/${id}/transactions`, data)
-      .then((r) => r.data),
-
-  transactions: (id: string) =>
-    apiClient
-      .get<InventoryTransaction[]>(`/inventory/${id}/transactions`)
-      .then((r) => r.data),
+export async function request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
+  const response = await raw(method, path, opts);
+  const text = await response.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!response.ok) {
+    const err = (data as { error?: { code: string; message: string; details?: unknown }; request_id?: string } | null) ?? {};
+    // An expired or revoked session ends the local session so every screen redirects to sign-in.
+    if (response.status === 401 && path !== "/auth/login") clearSession();
+    throw new ApiError(
+      response.status,
+      err.error?.code ?? "HTTP_ERROR",
+      err.error?.message ?? `Request failed (${response.status}).`,
+      err.error?.details,
+      err.request_id,
+    );
+  }
+  return data as T;
 }
 
-// ─── Maintenance Plans ────────────────────────────────────────────────────────
+export const api = {
+  get: <T>(path: string, query?: Query, signal?: AbortSignal) => request<T>("GET", path, { query, signal }),
+  post: <T>(path: string, body: unknown = {}, headers?: Record<string, string>) =>
+    request<T>("POST", path, { body, headers }),
+  put: <T>(path: string, body: unknown) => request<T>("PUT", path, { body }),
+  patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, { body }),
+  del: <T>(path: string) => request<T>("DELETE", path),
+  upload: <T>(path: string, form: FormData) => request<T>("POST", path, { form }),
+};
 
-export const maintenanceApi = {
-  list: () =>
-    apiClient.get<MaintenancePlan[]>('/maintenance-plans').then((r) => r.data),
-
-  get: (id: string) =>
-    apiClient.get<MaintenancePlan>(`/maintenance-plans/${id}`).then((r) => r.data),
-
-  create: (data: Partial<MaintenancePlan>) =>
-    apiClient
-      .post<MaintenancePlan>('/maintenance-plans', data)
-      .then((r) => r.data),
-
-  update: (id: string, data: Partial<MaintenancePlan>) =>
-    apiClient
-      .patch<MaintenancePlan>(`/maintenance-plans/${id}`, data)
-      .then((r) => r.data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/maintenance-plans/${id}`).then((r) => r.data),
+/** Fetch an authorized file and expose it as an object URL (plain links are not authorized). */
+export async function fetchBlobUrl(contentUrl: string): Promise<string> {
+  const response = await raw("GET", contentUrl.replace(/^\/api\/v1/, ""));
+  if (!response.ok) throw new ApiError(response.status, "FILE_ERROR", "Could not load the file.");
+  return URL.createObjectURL(await response.blob());
 }
 
-// ─── Properties ───────────────────────────────────────────────────────────────
-
-export const propertiesApi = {
-  list: () => apiClient.get<Property[]>('/properties').then((r) => r.data),
-
-  get: (id: string) =>
-    apiClient.get<Property>(`/properties/${id}`).then((r) => r.data),
-
-  create: (data: Partial<Property>) =>
-    apiClient.post<Property>('/properties', data).then((r) => r.data),
-
-  update: (id: string, data: Partial<Property>) =>
-    apiClient.patch<Property>(`/properties/${id}`, data).then((r) => r.data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/properties/${id}`).then((r) => r.data),
-}
-
-// ─── Categories ───────────────────────────────────────────────────────────────
-
-export const categoriesApi = {
-  list: () => apiClient.get<Category[]>('/categories').then((r) => r.data),
-
-  create: (data: Partial<Category>) =>
-    apiClient.post<Category>('/categories', data).then((r) => r.data),
-
-  update: (id: string, data: Partial<Category>) =>
-    apiClient.patch<Category>(`/categories/${id}`, data).then((r) => r.data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/categories/${id}`).then((r) => r.data),
-}
-
-// ─── Staff / Users ────────────────────────────────────────────────────────────
-
-export const staffApi = {
-  list: () => apiClient.get<User[]>('/staff').then((r) => r.data),
-
-  get: (id: string) => apiClient.get<User>(`/staff/${id}`).then((r) => r.data),
-
-  invite: (data: { email: string; full_name: string; role: string }) =>
-    apiClient.post<User>('/staff/invite', data).then((r) => r.data),
-
-  update: (id: string, data: Partial<User>) =>
-    apiClient.patch<User>(`/staff/${id}`, data).then((r) => r.data),
-
-  deactivate: (id: string) =>
-    apiClient.post<User>(`/staff/${id}/deactivate`).then((r) => r.data),
-}
-
-// ─── Organization ─────────────────────────────────────────────────────────────
-
-export const organizationApi = {
-  get: () => apiClient.get<Organization>('/organization').then((r) => r.data),
-
-  update: (data: Partial<Organization>) =>
-    apiClient.patch<Organization>('/organization', data).then((r) => r.data),
-}
-
-// ─── Notifications ────────────────────────────────────────────────────────────
-
-export const notificationsApi = {
-  list: () =>
-    apiClient.get<Notification[]>('/notifications').then((r) => r.data),
-
-  markRead: (id: string) =>
-    apiClient
-      .post<Notification>(`/notifications/${id}/read`)
-      .then((r) => r.data),
-
-  markAllRead: () =>
-    apiClient.post('/notifications/read-all').then((r) => r.data),
-}
-
-// ─── Audit Logs ───────────────────────────────────────────────────────────────
-
-export const auditApi = {
-  list: (params?: { resource_type?: string; actor_id?: string; page?: number }) =>
-    apiClient
-      .get<PaginatedResponse<AuditLog>>('/audit', { params })
-      .then((r) => r.data),
-}
-
-// ─── Dashboard ────────────────────────────────────────────────────────────────
-
-export const dashboardApi = {
-  stats: () =>
-    apiClient.get<DashboardStats>('/dashboard/stats').then((r) => r.data),
-}
-
-// ─── Reports ──────────────────────────────────────────────────────────────────
-
-export const reportsApi = {
-  summary: (params?: { from?: string; to?: string }) =>
-    apiClient.get('/reports/summary', { params }).then((r) => r.data),
-
-  technicianPerformance: (params?: { from?: string; to?: string }) =>
-    apiClient
-      .get('/reports/technician-performance', { params })
-      .then((r) => r.data),
-
-  slaCompliance: (params?: { from?: string; to?: string }) =>
-    apiClient.get('/reports/sla-compliance', { params }).then((r) => r.data),
+export function newCommandId(prefix = "web"): string {
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Math.random()).slice(2);
+  return `${prefix}-${random}`;
 }

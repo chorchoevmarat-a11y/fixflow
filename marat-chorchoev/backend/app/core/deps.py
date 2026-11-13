@@ -1,71 +1,148 @@
-import uuid
-from typing import Annotated
+"""Authentication and organization context for protected endpoints.
 
-from fastapi import Depends, Header, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
+The bearer token identifies the *user*. The ``X-Organization-ID`` header selects the
+organization and is checked against the user's memberships on every request (AUTH-03).
+"""
+
+import uuid
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import Annotated, Any
+
+from fastapi import Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_access_token
+from app.core.errors import BadRequest, Forbidden, Unauthorized
+from app.core.security import hash_token
 from app.database import get_db
-from app.models.models import MemberRole, OrganizationMembership, User
+from app.models.base import utcnow
+from app.models.models import AuthSession, Organization, OrganizationMembership, Role, User
 
-security = HTTPBearer()
-
-
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = decode_access_token(credentials.credentials)
-        user_id: str | None = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id), User.is_active == True))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise credentials_exception
-    return user
+DB = Annotated[AsyncSession, Depends(get_db)]
 
 
-async def get_current_membership(
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    x_organization_id: Annotated[str | None, Header()] = None,
-) -> OrganizationMembership:
-    if not x_organization_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="X-Organization-ID header required")
-    try:
-        org_id = uuid.UUID(x_organization_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid organization ID")
+@dataclass(slots=True)
+class Ctx:
+    """Everything an endpoint needs to authorize a request."""
 
-    result = await db.execute(
-        select(OrganizationMembership).where(
-            OrganizationMembership.user_id == current_user.id,
-            OrganizationMembership.organization_id == org_id,
-            OrganizationMembership.is_active == True,
+    user: User
+    membership: OrganizationMembership
+    org: Organization
+    session_id: uuid.UUID
+
+    @property
+    def org_id(self) -> uuid.UUID:
+        return self.org.id
+
+    @property
+    def role(self) -> str:
+        return self.membership.role
+
+    @property
+    def is_staff(self) -> bool:
+        return self.membership.role in (Role.ADMIN, Role.DISPATCHER)
+
+    @property
+    def is_admin(self) -> bool:
+        return self.membership.role == Role.ADMIN
+
+    @property
+    def is_requester(self) -> bool:
+        return self.membership.role == Role.REQUESTER
+
+    @property
+    def is_technician(self) -> bool:
+        return self.membership.role == Role.TECHNICIAN
+
+
+def bearer_token(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise Unauthorized("Sign in to continue.", headers={"WWW-Authenticate": "Bearer"})
+    return token.strip()
+
+
+async def authenticate(db: AsyncSession, token: str) -> tuple[User, AuthSession]:
+    row = (
+        await db.execute(
+            select(User, AuthSession)
+            .join(AuthSession, AuthSession.user_id == User.id)
+            .where(AuthSession.token_hash == hash_token(token))
         )
-    )
-    membership = result.scalar_one_or_none()
-    if membership is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this organization")
-    return membership
+    ).first()
+    if row is None:
+        raise Unauthorized("Session is not valid. Sign in again.", code="SESSION_INVALID")
+    user, session = row
+    if session.revoked_at is not None:
+        raise Unauthorized("Session was signed out. Sign in again.", code="SESSION_REVOKED")
+    if session.expires_at <= utcnow():
+        raise Unauthorized("Session expired. Sign in again.", code="SESSION_EXPIRED")
+    if not user.is_active:
+        raise Unauthorized("This account is deactivated.", code="ACCOUNT_DEACTIVATED")
+    return user, session
 
 
-def require_roles(*roles: MemberRole):
-    async def checker(membership: Annotated[OrganizationMembership, Depends(get_current_membership)]) -> OrganizationMembership:
-        if membership.role not in roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Requires one of roles: {[r.value for r in roles]}")
-        return membership
+async def resolve_membership(
+    db: AsyncSession, user: User, org_header: str | None
+) -> tuple[OrganizationMembership, Organization]:
+    if not org_header:
+        raise BadRequest("X-Organization-ID header is required.", code="ORGANIZATION_REQUIRED")
+    try:
+        org_id = uuid.UUID(org_header)
+    except ValueError as exc:
+        raise BadRequest(
+            "X-Organization-ID is not a valid id.", code="ORGANIZATION_INVALID"
+        ) from exc
+    row = (
+        await db.execute(
+            select(OrganizationMembership, Organization)
+            .join(Organization, Organization.id == OrganizationMembership.org_id)
+            .where(
+                OrganizationMembership.user_id == user.id,
+                OrganizationMembership.org_id == org_id,
+            )
+        )
+    ).first()
+    # Same answer whether the organization does not exist or the user is not in it.
+    if row is None:
+        raise Forbidden("You are not a member of this organization.", code="NOT_A_MEMBER")
+    membership, org = row
+    if not membership.is_active or not org.is_active:
+        raise Forbidden(
+            "Your access to this organization is deactivated.", code="MEMBERSHIP_DEACTIVATED"
+        )
+    return membership, org
+
+
+async def get_current_user(request: Request, db: DB) -> tuple[User, AuthSession]:
+    return await authenticate(db, bearer_token(request))
+
+
+async def get_ctx(
+    auth: Annotated[tuple[User, AuthSession], Depends(get_current_user)],
+    db: DB,
+    x_organization_id: Annotated[str | None, Header()] = None,
+) -> Ctx:
+    user, session = auth
+    membership, org = await resolve_membership(db, user, x_organization_id)
+    return Ctx(user=user, membership=membership, org=org, session_id=session.id)
+
+
+CurrentCtx = Annotated[Ctx, Depends(get_ctx)]
+
+
+def require(*roles: Role) -> Callable[..., Coroutine[Any, Any, Ctx]]:
+    async def checker(ctx: CurrentCtx) -> Ctx:
+        if ctx.membership.role not in roles:
+            raise Forbidden("Your role does not allow this action.", code="ROLE_FORBIDDEN")
+        return ctx
+
     return checker
+
+
+StaffCtx = Annotated[Ctx, Depends(require(Role.ADMIN, Role.DISPATCHER))]
+AdminCtx = Annotated[Ctx, Depends(require(Role.ADMIN))]
+TechnicianCtx = Annotated[Ctx, Depends(require(Role.TECHNICIAN))]
+RequesterCtx = Annotated[Ctx, Depends(require(Role.REQUESTER))]

@@ -1,553 +1,1026 @@
+"""SQLAlchemy models for FixFlow.
+
+Conventions
+-----------
+* Every tenant-owned table carries ``org_id``. Relations between tenant tables use
+  composite foreign keys ``(org_id, x_id) -> parent(org_id, id)`` so the database itself
+  refuses to link records that belong to different organizations (DATA-02).
+* Enumerations are stored as text guarded by CHECK constraints.
+* Money is stored as integer minor units (tyiyn); quantities are whole units.
+* All timestamps are timezone-aware UTC instants.
 """
-SQLAlchemy models for FixFlow Field Service Operations Platform.
-All models registered here so Alembic picks them up.
-"""
-import enum
+
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
+from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
-    Enum,
-    Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
-    Numeric,
+    SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, TimestampMixin, UUIDMixin
-
-
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
-class RequestStatus(str, enum.Enum):
-    DRAFT = "draft"
-    SUBMITTED = "submitted"
-    TRIAGED = "triaged"
-    ASSIGNED = "assigned"
-    IN_PROGRESS = "in_progress"
-    ON_HOLD = "on_hold"
-    PENDING_PARTS = "pending_parts"
-    PENDING_ESTIMATE = "pending_estimate"
-    ESTIMATE_APPROVED = "estimate_approved"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    CLOSED = "closed"
-
-
-class RequestPriority(str, enum.Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    URGENT = "urgent"
-    EMERGENCY = "emergency"
-
-
-class AssetStatus(str, enum.Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    UNDER_MAINTENANCE = "under_maintenance"
-    DECOMMISSIONED = "decommissioned"
-    LOST = "lost"
-
-
-class EstimateStatus(str, enum.Enum):
-    DRAFT = "draft"
-    SUBMITTED = "submitted"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    SUPERSEDED = "superseded"
-
-
-class AssignmentStatus(str, enum.Enum):
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    DECLINED = "declined"
-    EN_ROUTE = "en_route"
-    ON_SITE = "on_site"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-
-
-class RecurrenceRule(str, enum.Enum):
-    DAILY = "daily"
-    WEEKLY = "weekly"
-    BIWEEKLY = "biweekly"
-    MONTHLY = "monthly"
-    QUARTERLY = "quarterly"
-    SEMI_ANNUAL = "semi_annual"
-    ANNUAL = "annual"
-
-
-class NoteVisibility(str, enum.Enum):
-    INTERNAL = "internal"
-    CLIENT = "client"
-    TECHNICIAN = "technician"
-    ALL = "all"
-
-
-class MemberRole(str, enum.Enum):
-    OWNER = "owner"
-    ADMIN = "admin"
-    DISPATCHER = "dispatcher"
-    TECHNICIAN = "technician"
-    CLIENT = "client"
-    VIEWER = "viewer"
-
-
-class InventoryTransactionType(str, enum.Enum):
-    RESTOCK = "restock"
-    CONSUMPTION = "consumption"
-    ADJUSTMENT = "adjustment"
-    TRANSFER = "transfer"
-    RETURN = "return"
-
-
-class AuditAction(str, enum.Enum):
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
-    STATUS_CHANGE = "status_change"
-    LOGIN = "login"
-    LOGOUT = "logout"
-    FILE_UPLOAD = "file_upload"
-    ASSIGN = "assign"
-    UNASSIGN = "unassign"
-    NOTE_ADD = "note_add"
-    ESTIMATE_SUBMIT = "estimate_submit"
-    ESTIMATE_APPROVE = "estimate_approve"
-    ESTIMATE_REJECT = "estimate_reject"
-
+from app.models.base import Base, IdMixin, TimestampMixin, utcnow
 
 # ---------------------------------------------------------------------------
-# Models
+# Enumerations
 # ---------------------------------------------------------------------------
 
-class User(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    phone: Mapped[str | None] = mapped_column(String(50))
-    avatar_url: Mapped[str | None] = mapped_column(String(1024))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    # Relationships
-    memberships: Mapped[list["OrganizationMembership"]] = relationship(back_populates="user")
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="actor")
+class Role(StrEnum):
+    REQUESTER = "REQUESTER"
+    DISPATCHER = "DISPATCHER"
+    ADMIN = "ADMIN"
+    TECHNICIAN = "TECHNICIAN"
 
 
-class Organization(Base, UUIDMixin, TimestampMixin):
+class RequestStatus(StrEnum):
+    SUBMITTED = "SUBMITTED"
+    TRIAGED = "TRIAGED"
+    SCHEDULED = "SCHEDULED"
+    ACCEPTED = "ACCEPTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    COMPLETED = "COMPLETED"
+    REOPENED = "REOPENED"
+    CLOSED = "CLOSED"
+    CANCELED = "CANCELED"
+
+
+OPEN_STATUSES = (
+    RequestStatus.SUBMITTED,
+    RequestStatus.TRIAGED,
+    RequestStatus.SCHEDULED,
+    RequestStatus.ACCEPTED,
+    RequestStatus.IN_PROGRESS,
+    RequestStatus.BLOCKED,
+    RequestStatus.REOPENED,
+)
+RESERVING_STATUSES = (
+    RequestStatus.SCHEDULED,
+    RequestStatus.ACCEPTED,
+    RequestStatus.IN_PROGRESS,
+    RequestStatus.BLOCKED,
+)
+TERMINAL_STATUSES = (RequestStatus.CLOSED, RequestStatus.CANCELED)
+
+
+class Priority(StrEnum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+
+
+class AssetStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    OUT_OF_SERVICE = "OUT_OF_SERVICE"
+    RETIRED = "RETIRED"
+
+
+class AssignmentStatus(StrEnum):
+    SCHEDULED = "SCHEDULED"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"
+    UNASSIGNED = "UNASSIGNED"
+    RESCHEDULED = "RESCHEDULED"
+    COMPLETED = "COMPLETED"
+    CANCELED = "CANCELED"
+
+
+class EstimateStatus(StrEnum):
+    DRAFT = "DRAFT"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class Recurrence(StrEnum):
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+
+
+class NoteVisibility(StrEnum):
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+
+
+class EvidenceKind(StrEnum):
+    INTAKE = "INTAKE"
+    NOTE = "NOTE"
+    COMPLETION = "COMPLETION"
+
+
+class SlaState(StrEnum):
+    ON_TRACK = "ON_TRACK"
+    AT_RISK = "AT_RISK"
+    OVERDUE = "OVERDUE"
+
+
+class StockMovementKind(StrEnum):
+    ADDITION = "ADDITION"
+    CONSUMPTION = "CONSUMPTION"
+
+
+class NotificationType(StrEnum):
+    ASSIGNMENT_NEW = "ASSIGNMENT_NEW"
+    ASSIGNMENT_CHANGED = "ASSIGNMENT_CHANGED"
+    ASSIGNMENT_DECLINED = "ASSIGNMENT_DECLINED"
+    ESTIMATE_SUBMITTED = "ESTIMATE_SUBMITTED"
+    ESTIMATE_DECISION = "ESTIMATE_DECISION"
+    JOB_COMPLETED = "JOB_COMPLETED"
+    REWORK_REQUESTED = "REWORK_REQUESTED"
+    SLA_OVERDUE = "SLA_OVERDUE"
+
+
+# Foreign keys are checked at COMMIT. Rows of one transaction may therefore be written
+# in any order, while a transaction that would leave a dangling or cross-organization
+# reference still cannot commit.
+DEFERRED: dict[str, Any] = {"deferrable": True, "initially": "DEFERRED"}
+
+
+def _enum_check(column: str, enum_cls: type[StrEnum]) -> CheckConstraint:
+    values = ", ".join(f"'{member.value}'" for member in enum_cls)
+    return CheckConstraint(f"{column} IN ({values})", name=f"{column}_valid")
+
+
+def _org_fk(
+    column: str, table: str, *, ondelete: str = "RESTRICT", name: str | None = None
+) -> ForeignKeyConstraint:
+    """Composite FK that pins the child and the parent to the same organization."""
+    return ForeignKeyConstraint(
+        ["org_id", column],
+        [f"{table}.org_id", f"{table}.id"],
+        ondelete=ondelete,
+        name=name,
+        **DEFERRED,
+    )
+
+
+def _org_column() -> Mapped[uuid.UUID]:
+    return mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+
+
+TZDateTime = DateTime(timezone=True)
+
+# ---------------------------------------------------------------------------
+# Identity and organizations
+# ---------------------------------------------------------------------------
+
+
+class Organization(Base, IdMixin, TimestampMixin):
     __tablename__ = "organizations"
 
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    logo_url: Mapped[str | None] = mapped_column(String(1024))
-    address: Mapped[str | None] = mapped_column(Text)
-    timezone: Mapped[str] = mapped_column(String(100), default="UTC", nullable=False)
-    business_hours: Mapped[dict | None] = mapped_column(JSON)  # {mon: {open: "08:00", close: "17:00"}, ...}
-    sla_policy: Mapped[dict | None] = mapped_column(JSON)  # {high: 4, urgent: 1, ...} hours
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Bishkek")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KGS")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    next_request_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
-    # Relationships
-    memberships: Mapped[list["OrganizationMembership"]] = relationship(back_populates="organization")
-    properties: Mapped[list["Property"]] = relationship(back_populates="organization")
-    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="organization")
-    inventory_items: Mapped[list["InventoryItem"]] = relationship(back_populates="organization")
-    maintenance_plans: Mapped[list["MaintenancePlan"]] = relationship(back_populates="organization")
-    holidays: Mapped[list["Holiday"]] = relationship(back_populates="organization")
-    categories: Mapped[list["ServiceCategory"]] = relationship(back_populates="organization")
+    __table_args__ = (CheckConstraint("currency = 'KGS'", name="currency_kgs"),)
 
 
-class OrganizationMembership(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "organization_memberships"
+class BusinessHours(Base, IdMixin):
+    """One opening interval on one weekday (0 = Monday). No rows for a day = closed."""
+
+    __tablename__ = "business_hours"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    opens_at: Mapped[time] = mapped_column(Time, nullable=False)
+    closes_at: Mapped[time] = mapped_column(Time, nullable=False)
+
     __table_args__ = (
-        UniqueConstraint("organization_id", "user_id", name="uq_org_membership"),
+        CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday_range"),
+        CheckConstraint("closes_at > opens_at", name="interval_positive"),
+        UniqueConstraint("org_id", "weekday", "opens_at"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    role: Mapped[MemberRole] = mapped_column(Enum(MemberRole), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    invited_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    hourly_rate: Mapped[float | None] = mapped_column(Numeric(10, 2))
-    skills: Mapped[list | None] = mapped_column(JSON)  # ["plumbing", "electrical"]
 
-    # Relationships
-    organization: Mapped["Organization"] = relationship(back_populates="memberships")
-    user: Mapped["User"] = relationship(back_populates="memberships", foreign_keys=[user_id])
-    assignments: Mapped[list["Assignment"]] = relationship(back_populates="technician_membership")
-
-
-class Holiday(Base, UUIDMixin):
+class Holiday(Base, IdMixin):
     __tablename__ = "holidays"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_recurring: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    org_id: Mapped[uuid.UUID] = _org_column()
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
 
-    organization: Mapped["Organization"] = relationship(back_populates="holidays")
+    __table_args__ = (UniqueConstraint("org_id", "day"),)
 
 
-class ServiceCategory(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "service_categories"
+class User(Base, IdMixin, TimestampMixin):
+    __tablename__ = "users"
+
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (CheckConstraint("email = lower(email)", name="email_lowercase"),)
+
+
+class OrganizationMembership(Base, IdMixin, TimestampMixin):
+    __tablename__ = "organization_memberships"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
     __table_args__ = (
-        UniqueConstraint("organization_id", "name", name="uq_category_name_per_org"),
+        _enum_check("role", Role),
+        UniqueConstraint("org_id", "user_id"),
+        UniqueConstraint("org_id", "id"),
+        Index("ix_memberships_user", "user_id"),
+        Index("ix_memberships_org_role", "org_id", "role"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    color: Mapped[str | None] = mapped_column(String(20))  # hex color
-    icon: Mapped[str | None] = mapped_column(String(100))
-    sla_hours: Mapped[float | None] = mapped_column(Float)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    organization: Mapped["Organization"] = relationship(back_populates="categories")
-    parent: Mapped["ServiceCategory | None"] = relationship(remote_side="ServiceCategory.id")
-    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="category")
+class AuthSession(Base, IdMixin):
+    """Server-side session. Only a SHA-256 digest of the bearer token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE", **DEFERRED), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+    __table_args__ = (Index("ix_auth_sessions_user", "user_id"),)
 
 
-class Property(Base, UUIDMixin, TimestampMixin):
+class LoginAttempt(Base, IdMixin):
+    """Database-backed record used to rate limit sign-in across API workers."""
+
+    __tablename__ = "login_attempts"
+
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_login_attempts_email_created", "email", "created_at"),
+        Index("ix_login_attempts_ip_created", "ip_address", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Skills, technicians, categories
+# ---------------------------------------------------------------------------
+
+
+class Skill(Base, IdMixin, TimestampMixin):
+    __tablename__ = "skills"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    __table_args__ = (UniqueConstraint("org_id", "name"), UniqueConstraint("org_id", "id"))
+
+
+class TechnicianProfile(Base, IdMixin, TimestampMixin):
+    __tablename__ = "technician_profiles"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    membership_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    # Compact numeric identity used by the schedule exclusion constraint.
+    technician_no: Mapped[int] = mapped_column(BigInteger, Identity(always=True), unique=True)
+    title: Mapped[str | None] = mapped_column(String(200))
+    phone: Mapped[str | None] = mapped_column(String(50))
+
+    __table_args__ = (
+        _org_fk("membership_id", "organization_memberships"),
+        UniqueConstraint("membership_id"),
+        UniqueConstraint("org_id", "id"),
+        UniqueConstraint("id", "technician_no"),
+        Index("ix_technician_profiles_org_user", "org_id", "user_id"),
+    )
+
+
+class TechnicianSkill(Base):
+    __tablename__ = "technician_skills"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    skill_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+
+    __table_args__ = (
+        _org_fk("technician_id", "technician_profiles", ondelete="CASCADE"),
+        _org_fk("skill_id", "skills", ondelete="CASCADE"),
+    )
+
+
+class TechnicianAvailability(Base, IdMixin):
+    """Weekly working interval in the organization's local time (0 = Monday)."""
+
+    __tablename__ = "technician_availability"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    starts_at: Mapped[time] = mapped_column(Time, nullable=False)
+    ends_at: Mapped[time] = mapped_column(Time, nullable=False)
+
+    __table_args__ = (
+        _org_fk("technician_id", "technician_profiles", ondelete="CASCADE"),
+        CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday_range"),
+        CheckConstraint("ends_at > starts_at", name="interval_positive"),
+        UniqueConstraint("technician_id", "weekday", "starts_at"),
+    )
+
+
+class TechnicianTimeOff(Base, IdMixin):
+    __tablename__ = "technician_time_off"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    start_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("technician_id", "technician_profiles", ondelete="CASCADE"),
+        CheckConstraint("end_at > start_at", name="interval_positive"),
+        Index("ix_time_off_technician_start", "technician_id", "start_at"),
+    )
+
+
+class ServiceCategory(Base, IdMixin, TimestampMixin):
+    __tablename__ = "service_categories"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    default_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name"),
+        UniqueConstraint("org_id", "id"),
+        CheckConstraint("default_duration_minutes >= 30", name="duration_min"),
+    )
+
+
+class CategorySkill(Base):
+    __tablename__ = "category_skills"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    category_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    skill_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+
+    __table_args__ = (
+        _org_fk("category_id", "service_categories", ondelete="CASCADE"),
+        _org_fk("skill_id", "skills", ondelete="CASCADE"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Properties and assets
+# ---------------------------------------------------------------------------
+
+
+class Property(Base, IdMixin, TimestampMixin):
     __tablename__ = "properties"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    address: Mapped[str] = mapped_column(Text, nullable=False)
-    city: Mapped[str | None] = mapped_column(String(100))
-    state: Mapped[str | None] = mapped_column(String(100))
-    postal_code: Mapped[str | None] = mapped_column(String(20))
-    country: Mapped[str] = mapped_column(String(10), default="US", nullable=False)
-    latitude: Mapped[float | None] = mapped_column(Float)
-    longitude: Mapped[float | None] = mapped_column(Float)
-    contact_name: Mapped[str | None] = mapped_column(String(255))
-    contact_phone: Mapped[str | None] = mapped_column(String(50))
-    contact_email: Mapped[str | None] = mapped_column(String(255))
-    access_notes: Mapped[str | None] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
+    org_id: Mapped[uuid.UUID] = _org_column()
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    address: Mapped[str] = mapped_column(String(500), nullable=False)
+    contact_instructions: Mapped[str | None] = mapped_column(Text)
+    # When false only requesters listed in property_requesters may file requests here.
+    is_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    organization: Mapped["Organization"] = relationship(back_populates="properties")
-    assets: Mapped[list["Asset"]] = relationship(back_populates="property")
-    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="property")
+    __table_args__ = (
+        UniqueConstraint("org_id", "id"),
+        UniqueConstraint("org_id", "name"),
+    )
 
 
-class Asset(Base, UUIDMixin, TimestampMixin):
+class PropertyRequester(Base):
+    __tablename__ = "property_requesters"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    membership_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+
+    __table_args__ = (
+        _org_fk("property_id", "properties", ondelete="CASCADE"),
+        _org_fk("membership_id", "organization_memberships", ondelete="CASCADE"),
+    )
+
+
+class Asset(Base, IdMixin, TimestampMixin):
     __tablename__ = "assets"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    asset_tag: Mapped[str | None] = mapped_column(String(100), index=True)
-    make: Mapped[str | None] = mapped_column(String(255))
-    model: Mapped[str | None] = mapped_column(String(255))
-    serial_number: Mapped[str | None] = mapped_column(String(255))
-    year: Mapped[int | None] = mapped_column(Integer)
-    status: Mapped[AssetStatus] = mapped_column(Enum(AssetStatus), default=AssetStatus.ACTIVE, nullable=False)
-    purchase_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    warranty_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    location_description: Mapped[str | None] = mapped_column(Text)
-    specifications: Mapped[dict | None] = mapped_column(JSON)
-    image_url: Mapped[str | None] = mapped_column(String(1024))
-    qr_code: Mapped[str | None] = mapped_column(String(255))
-
-    property: Mapped["Property"] = relationship(back_populates="assets")
-    service_requests: Mapped[list["ServiceRequest"]] = relationship(back_populates="asset")
-    maintenance_plans: Mapped[list["MaintenancePlan"]] = relationship(back_populates="asset")
-    asset_history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset")
-
-
-class AssetHistory(Base, UUIDMixin):
-    __tablename__ = "asset_history"
-
-    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    old_value: Mapped[str | None] = mapped_column(Text)
-    new_value: Mapped[str | None] = mapped_column(Text)
-    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    asset: Mapped["Asset"] = relationship(back_populates="asset_history")
-
-
-class ServiceRequest(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "service_requests"
-    __table_args__ = (
-        Index("ix_sr_org_status", "org_id", "status"),
-        Index("ix_sr_org_requester", "org_id", "requester_id"),
-        Index("ix_sr_org_created", "org_id", "created_at"),
-    )
-
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    requester_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    property_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="SET NULL"))
-    asset_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="SET NULL"))
-    category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
-    request_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[RequestStatus] = mapped_column(Enum(RequestStatus), default=RequestStatus.SUBMITTED, nullable=False)
-    priority: Mapped[RequestPriority] = mapped_column(Enum(RequestPriority), default=RequestPriority.MEDIUM, nullable=False)
-    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    sla_breached: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    actual_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    actual_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    source: Mapped[str] = mapped_column(String(50), default="web", nullable=False)  # web, mobile, api, pm
-    external_ref: Mapped[str | None] = mapped_column(String(255))  # for maintenance-generated
-    resolution_notes: Mapped[str | None] = mapped_column(Text)
-    tags: Mapped[list | None] = mapped_column(JSON)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
-
-    organization: Mapped["Organization"] = relationship(back_populates="service_requests")
-    property: Mapped["Property | None"] = relationship(back_populates="service_requests")
-    asset: Mapped["Asset | None"] = relationship(back_populates="service_requests")
-    category: Mapped["ServiceCategory | None"] = relationship(back_populates="service_requests")
-    assignments: Mapped[list["Assignment"]] = relationship(back_populates="service_request")
-    estimates: Mapped[list["Estimate"]] = relationship(back_populates="service_request")
-    work_notes: Mapped[list["WorkNote"]] = relationship(back_populates="service_request")
-    file_attachments: Mapped[list["FileAttachment"]] = relationship(back_populates="service_request")
-    material_usages: Mapped[list["MaterialUsage"]] = relationship(back_populates="service_request")
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="service_request")
-
-
-class Assignment(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "assignments"
-    __table_args__ = (
-        Index("ix_assignment_tech_time", "technician_id", "start_at", "end_at"),
-    )
-
-    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organization_memberships.id", ondelete="CASCADE"), nullable=False)
-    assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    status: Mapped[AssignmentStatus] = mapped_column(Enum(AssignmentStatus), default=AssignmentStatus.PENDING, nullable=False)
-    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    declined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    en_route_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    on_site_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    travel_minutes: Mapped[int | None] = mapped_column(Integer)
-    work_minutes: Mapped[int | None] = mapped_column(Integer)
+    org_id: Mapped[uuid.UUID] = _org_column()
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    code: Mapped[str] = mapped_column(String(60), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    serial_number: Mapped[str | None] = mapped_column(String(120))
+    installed_on: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=AssetStatus.ACTIVE)
     notes: Mapped[str | None] = mapped_column(Text)
 
-    service_request: Mapped["ServiceRequest"] = relationship(back_populates="assignments")
-    technician_membership: Mapped["OrganizationMembership"] = relationship(back_populates="assignments")
-
-
-class Estimate(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "estimates"
-
-    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    status: Mapped[EstimateStatus] = mapped_column(Enum(EstimateStatus), default=EstimateStatus.DRAFT, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    labor_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
-    materials_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
-    other_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
-    tax_rate: Mapped[float] = mapped_column(Numeric(5, 4), default=0, nullable=False)
-    total_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
-    notes: Mapped[str | None] = mapped_column(Text)
-    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    rejection_reason: Mapped[str | None] = mapped_column(Text)
-    line_items: Mapped[list | None] = mapped_column(JSON)  # [{description, qty, unit_price, total}]
-
-    service_request: Mapped["ServiceRequest"] = relationship(back_populates="estimates")
-
-
-class WorkNote(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "work_notes"
     __table_args__ = (
-        UniqueConstraint("client_command_id", name="uq_work_note_command"),
+        _org_fk("property_id", "properties"),
+        _enum_check("status", AssetStatus),
+        UniqueConstraint("org_id", "code"),
+        UniqueConstraint("org_id", "id"),
+        Index("ix_assets_org_property", "org_id", "property_id"),
     )
 
-    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    author_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    visibility: Mapped[NoteVisibility] = mapped_column(Enum(NoteVisibility), default=NoteVisibility.INTERNAL, nullable=False)
-    client_command_id: Mapped[str | None] = mapped_column(String(255), unique=True)  # idempotency key
-    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
 
-    service_request: Mapped["ServiceRequest"] = relationship(back_populates="work_notes")
-    file_attachments: Mapped[list["FileAttachment"]] = relationship(back_populates="work_note")
+# ---------------------------------------------------------------------------
+# Service requests
+# ---------------------------------------------------------------------------
 
 
-class FileAttachment(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "file_attachments"
-
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"))
-    work_note_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("work_notes.id", ondelete="CASCADE"))
-    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    filename: Mapped[str] = mapped_column(String(500), nullable=False)
-    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
-    thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
-    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    service_request: Mapped["ServiceRequest | None"] = relationship(back_populates="file_attachments")
-    work_note: Mapped["WorkNote | None"] = relationship(back_populates="file_attachments")
-
-
-class InventoryItem(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "inventory_items"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "sku", name="uq_inventory_sku_per_org"),
-    )
-
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    sku: Mapped[str | None] = mapped_column(String(100))
-    unit: Mapped[str] = mapped_column(String(50), default="each", nullable=False)
-    unit_cost: Mapped[float] = mapped_column(Numeric(10, 2), default=0, nullable=False)
-    stock_quantity: Mapped[float] = mapped_column(Numeric(12, 3), default=0, nullable=False)
-    min_stock_level: Mapped[float | None] = mapped_column(Numeric(12, 3))
-    max_stock_level: Mapped[float | None] = mapped_column(Numeric(12, 3))
-    location: Mapped[str | None] = mapped_column(String(255))
-    supplier: Mapped[str | None] = mapped_column(String(255))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    organization: Mapped["Organization"] = relationship(back_populates="inventory_items")
-    transactions: Mapped[list["InventoryTransaction"]] = relationship(back_populates="item")
-    material_usages: Mapped[list["MaterialUsage"]] = relationship(back_populates="item")
-
-
-class InventoryTransaction(Base, UUIDMixin):
-    __tablename__ = "inventory_transactions"
-
-    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
-    transaction_type: Mapped[InventoryTransactionType] = mapped_column(Enum(InventoryTransactionType), nullable=False)
-    quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
-    unit_cost: Mapped[float | None] = mapped_column(Numeric(10, 2))
-    reference_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)  # service_request or other ref
-    notes: Mapped[str | None] = mapped_column(Text)
-    performed_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    transacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    item: Mapped["InventoryItem"] = relationship(back_populates="transactions")
-
-
-class MaterialUsage(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "material_usages"
-    __table_args__ = (
-        UniqueConstraint("client_command_id", name="uq_material_usage_command"),
-    )
-
-    service_request_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
-    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False)
-    recorded_by_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
-    unit_cost: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    total_cost: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
-    client_command_id: Mapped[str | None] = mapped_column(String(255), unique=True)  # idempotency key
-    notes: Mapped[str | None] = mapped_column(Text)
-
-    service_request: Mapped["ServiceRequest"] = relationship(back_populates="material_usages")
-    item: Mapped["InventoryItem"] = relationship(back_populates="material_usages")
-
-
-class MaintenancePlan(Base, UUIDMixin, TimestampMixin):
+class MaintenancePlan(Base, IdMixin, TimestampMixin):
     __tablename__ = "maintenance_plans"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    asset_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("assets.id", ondelete="SET NULL"))
-    property_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("properties.id", ondelete="SET NULL"))
-    category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"))
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    recurrence: Mapped[RecurrenceRule] = mapped_column(Enum(RecurrenceRule), nullable=False)
-    next_occurrence: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    advance_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)  # generate SR X days before
-    priority: Mapped[RequestPriority] = mapped_column(Enum(RequestPriority), default=RequestPriority.MEDIUM, nullable=False)
-    estimated_duration_minutes: Mapped[int | None] = mapped_column(Integer)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    organization: Mapped["Organization"] = relationship(back_populates="maintenance_plans")
-    asset: Mapped["Asset | None"] = relationship(back_populates="maintenance_plans")
-    occurrences: Mapped[list["MaintenancePlanOccurrence"]] = relationship(back_populates="plan")
-
-
-class MaintenancePlanOccurrence(Base, UUIDMixin):
-    __tablename__ = "maintenance_plan_occurrences"
-    __table_args__ = (
-        UniqueConstraint("plan_id", "occurrence_date", name="uq_plan_occurrence_date"),
+    org_id: Mapped[uuid.UUID] = _org_column()
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    category_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[str] = mapped_column(String(10), nullable=False, default=Priority.NORMAL)
+    first_date: Mapped[date] = mapped_column(Date, nullable=False)
+    recurrence: Mapped[str] = mapped_column(String(10), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
     )
 
-    plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("maintenance_plans.id", ondelete="CASCADE"), nullable=False, index=True)
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="SET NULL"))
-    occurrence_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        _org_fk("asset_id", "assets"),
+        _org_fk("category_id", "service_categories"),
+        _enum_check("priority", Priority),
+        _enum_check("recurrence", Recurrence),
+        UniqueConstraint("org_id", "id"),
+        Index("ix_maintenance_plans_org_asset", "org_id", "asset_id"),
+    )
 
-    plan: Mapped["MaintenancePlan"] = relationship(back_populates="occurrences")
+
+class ServiceRequest(Base, IdMixin, TimestampMixin):
+    __tablename__ = "service_requests"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    requester_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    property_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    category_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=RequestStatus.SUBMITTED)
+    preferred_start_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    preferred_end_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    triage_notes: Mapped[str | None] = mapped_column(Text)
+    duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    completion_note: Mapped[str | None] = mapped_column(Text)
+    blocker_reason: Mapped[str | None] = mapped_column(Text)
+
+    # Preventive maintenance provenance (PM-02 / PM-03)
+    maintenance_plan_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    occurrence_date: Mapped[date | None] = mapped_column(Date)
+
+    # SLA clock (business seconds). See app/services/sla.py.
+    sla_budget_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    sla_consumed_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sla_running_since: Mapped[datetime | None] = mapped_column(TZDateTime)
+    sla_due_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    sla_at_risk_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    sla_overdue_from: Mapped[datetime | None] = mapped_column(TZDateTime)
+    sla_stopped_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    sla_final_state: Mapped[str | None] = mapped_column(String(10))
+    sla_escalated_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+    completed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    canceled_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+
+    __table_args__ = (
+        _org_fk("property_id", "properties"),
+        _org_fk("asset_id", "assets"),
+        _org_fk("category_id", "service_categories"),
+        _org_fk("maintenance_plan_id", "maintenance_plans"),
+        _org_fk("duplicate_of_id", "service_requests", name="fk_service_requests_duplicate_of"),
+        _enum_check("status", RequestStatus),
+        _enum_check("priority", Priority),
+        CheckConstraint("char_length(title) BETWEEN 5 AND 120", name="title_length"),
+        CheckConstraint("char_length(description) BETWEEN 20 AND 3000", name="description_length"),
+        CheckConstraint(
+            "preferred_end_at IS NULL OR preferred_start_at IS NULL "
+            "OR preferred_end_at > preferred_start_at",
+            name="preferred_interval",
+        ),
+        CheckConstraint(
+            "duplicate_of_id IS NULL OR duplicate_of_id <> id", name="not_self_duplicate"
+        ),
+        CheckConstraint(
+            "(maintenance_plan_id IS NULL) = (occurrence_date IS NULL)", name="plan_occurrence_pair"
+        ),
+        CheckConstraint("sla_budget_seconds > 0", name="sla_budget_positive"),
+        CheckConstraint("sla_consumed_seconds >= 0", name="sla_consumed_nonnegative"),
+        UniqueConstraint("org_id", "id"),
+        UniqueConstraint("org_id", "number"),
+        UniqueConstraint(
+            "maintenance_plan_id", "occurrence_date", name="uq_request_plan_occurrence"
+        ),
+        Index("ix_requests_org_status", "org_id", "status"),
+        Index("ix_requests_org_created", "org_id", "created_at"),
+        Index("ix_requests_org_requester", "org_id", "requester_id"),
+        Index("ix_requests_org_priority", "org_id", "priority"),
+        Index("ix_requests_org_category", "org_id", "category_id"),
+        Index("ix_requests_org_property", "org_id", "property_id"),
+        Index("ix_requests_org_asset", "org_id", "asset_id"),
+        Index("ix_requests_org_due", "org_id", "sla_due_at"),
+        Index("ix_requests_org_completed", "org_id", "completed_at"),
+    )
 
 
-class Notification(Base, UUIDMixin):
+class SlaEvent(Base, IdMixin):
+    """Append-only history that lets the SLA budget be re-derived (SLA-03)."""
+
+    __tablename__ = "sla_events"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    budget_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    consumed_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    detail: Mapped[str | None] = mapped_column(String(300))
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests", ondelete="CASCADE"),
+        Index("ix_sla_events_request", "request_id", "occurred_at"),
+    )
+
+
+class Assignment(Base, IdMixin, TimestampMixin):
+    __tablename__ = "assignments"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    technician_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    technician_no: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AssignmentStatus.SCHEDULED
+    )
+    # True while the request holds the technician's time (SCHED-03).
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    assigned_by_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    ended_reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        _org_fk("technician_id", "technician_profiles"),
+        ForeignKeyConstraint(
+            ["technician_id", "technician_no"],
+            ["technician_profiles.id", "technician_profiles.technician_no"],
+            name="fk_assignments_technician_no",
+            **DEFERRED,
+        ),
+        _enum_check("status", AssignmentStatus),
+        CheckConstraint("end_at >= start_at + interval '30 minutes'", name="min_duration"),
+        CheckConstraint(
+            "is_active = (status IN ('SCHEDULED', 'ACCEPTED'))", name="active_matches_status"
+        ),
+        UniqueConstraint("org_id", "id"),
+        # SCHED-03 / SCHED-04: no two active reservations of one technician may overlap.
+        # Half-open ranges make back-to-back appointments legal. Range operators are
+        # native to GiST, so no extension is required.
+        ExcludeConstraint(
+            (text("int8range(technician_no, technician_no, '[]')"), "&&"),
+            (text("tstzrange(start_at, end_at, '[)')"), "&&"),
+            where=text("is_active"),
+            using="gist",
+            name="ex_assignments_no_overlap",
+        ),
+        Index(
+            "uq_assignments_one_active_per_request",
+            "request_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+        Index("ix_assignments_org_technician_start", "org_id", "technician_id", "start_at"),
+        Index("ix_assignments_request", "request_id", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Estimates
+# ---------------------------------------------------------------------------
+
+
+class Estimate(Base, IdMixin, TimestampMixin):
+    __tablename__ = "estimates"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=EstimateStatus.DRAFT)
+    labor_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    labor_rate_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    labor_total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    materials_total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KGS")
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    submitted_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED)
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(TZDateTime)
+    decided_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED)
+    )
+    decision_reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        _org_fk("previous_version_id", "estimates", name="fk_estimates_previous_version"),
+        _enum_check("status", EstimateStatus),
+        CheckConstraint("version >= 1", name="version_positive"),
+        CheckConstraint("labor_minutes >= 0", name="labor_minutes_nonnegative"),
+        CheckConstraint("labor_rate_minor >= 0", name="labor_rate_nonnegative"),
+        CheckConstraint(
+            "labor_total_minor >= 0 AND materials_total_minor >= 0 "
+            "AND total_minor = labor_total_minor + materials_total_minor",
+            name="totals_consistent",
+        ),
+        CheckConstraint("currency = 'KGS'", name="currency_kgs"),
+        UniqueConstraint("org_id", "id"),
+        UniqueConstraint("request_id", "version"),
+        Index(
+            "uq_estimates_one_draft_per_request",
+            "request_id",
+            unique=True,
+            postgresql_where=text("status = 'DRAFT'"),
+        ),
+        Index(
+            "uq_estimates_one_current_per_request",
+            "request_id",
+            unique=True,
+            postgresql_where=text("status IN ('AWAITING_APPROVAL', 'APPROVED', 'REJECTED')"),
+        ),
+        Index("ix_estimates_org_status", "org_id", "status"),
+    )
+
+
+class EstimateLine(Base, IdMixin):
+    __tablename__ = "estimate_lines"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    estimate_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(String(300), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    line_total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        _org_fk("estimate_id", "estimates", ondelete="CASCADE"),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("unit_price_minor >= 0", name="unit_price_nonnegative"),
+        CheckConstraint(
+            "line_total_minor = quantity * unit_price_minor", name="line_total_consistent"
+        ),
+        UniqueConstraint("estimate_id", "position"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Inventory
+# ---------------------------------------------------------------------------
+
+
+class InventoryItem(Base, IdMixin, TimestampMixin):
+    __tablename__ = "inventory_items"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    code: Mapped[str] = mapped_column(String(60), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reorder_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unit_price_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        CheckConstraint("stock_quantity >= 0", name="stock_nonnegative"),
+        CheckConstraint("reorder_threshold >= 0", name="threshold_nonnegative"),
+        CheckConstraint("unit_price_minor >= 0", name="unit_price_nonnegative"),
+        UniqueConstraint("org_id", "code"),
+        UniqueConstraint("org_id", "id"),
+    )
+
+
+class StockMovement(Base, IdMixin):
+    __tablename__ = "stock_movements"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(300), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("item_id", "inventory_items"),
+        _enum_check("kind", StockMovementKind),
+        CheckConstraint("quantity_delta <> 0", name="delta_nonzero"),
+        CheckConstraint("balance_after >= 0", name="balance_nonnegative"),
+        Index("ix_stock_movements_item", "item_id", "created_at"),
+    )
+
+
+class MaterialUsage(Base, IdMixin):
+    __tablename__ = "material_usages"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    technician_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    client_command_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        _org_fk("item_id", "inventory_items"),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("total_minor = quantity * unit_price_minor", name="total_consistent"),
+        UniqueConstraint("org_id", "client_command_id", name="uq_material_usage_command"),
+        Index("ix_material_usages_request", "request_id", "created_at"),
+        Index("ix_material_usages_org_created", "org_id", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Notes, evidence, notifications, feedback
+# ---------------------------------------------------------------------------
+
+
+class WorkNote(Base, IdMixin):
+    """Immutable note. There is deliberately no update path."""
+
+    __tablename__ = "work_notes"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    author_role: Mapped[str] = mapped_column(String(20), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    visibility: Mapped[str] = mapped_column(String(10), nullable=False)
+    assignment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    client_command_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        _org_fk("assignment_id", "assignments"),
+        _enum_check("visibility", NoteVisibility),
+        CheckConstraint("char_length(body) BETWEEN 1 AND 4000", name="body_length"),
+        UniqueConstraint("org_id", "id"),
+        UniqueConstraint("org_id", "client_command_id", name="uq_work_note_command"),
+        Index("ix_work_notes_request", "request_id", "created_at"),
+    )
+
+
+class EvidenceFile(Base, IdMixin):
+    __tablename__ = "evidence_files"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    note_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    assignment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    uploader_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    visibility: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=NoteVisibility.PUBLIC
+    )
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    client_command_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        _org_fk("note_id", "work_notes"),
+        _org_fk("assignment_id", "assignments"),
+        _enum_check("kind", EvidenceKind),
+        _enum_check("visibility", NoteVisibility),
+        CheckConstraint("size_bytes > 0 AND size_bytes <= 10485760", name="size_bounds"),
+        CheckConstraint(
+            "content_type IN ('image/jpeg', 'image/png', 'image/webp')", name="content_type_valid"
+        ),
+        UniqueConstraint("org_id", "client_command_id", name="uq_evidence_command"),
+        Index("ix_evidence_request", "request_id", "created_at"),
+    )
+
+
+class Notification(Base, IdMixin):
     __tablename__ = "notifications"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"))
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    body: Mapped[str | None] = mapped_column(Text)
-    type: Mapped[str] = mapped_column(String(100), nullable=False)  # assignment, sla_breach, etc.
-    reference_type: Mapped[str | None] = mapped_column(String(100))
-    reference_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    org_id: Mapped[uuid.UUID] = _org_column()
+    recipient_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE", **DEFERRED), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+    read_at: Mapped[datetime | None] = mapped_column(TZDateTime)
 
-    user: Mapped["User"] = relationship(back_populates="notifications")
-
-
-class AuditEvent(Base, UUIDMixin):
-    __tablename__ = "audit_events"
     __table_args__ = (
-        Index("ix_audit_org_created", "org_id", "created_at"),
-        Index("ix_audit_sr", "service_request_id", "created_at"),
+        _org_fk("request_id", "service_requests", ondelete="CASCADE"),
+        _enum_check("type", NotificationType),
+        Index("ix_notifications_recipient", "org_id", "recipient_id", "created_at"),
+        Index(
+            "ix_notifications_unread",
+            "org_id",
+            "recipient_id",
+            postgresql_where=text("read_at IS NULL"),
+        ),
     )
 
-    org_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="SET NULL"), index=True)
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"))
-    service_request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("service_requests.id", ondelete="SET NULL"))
-    action: Mapped[AuditAction] = mapped_column(Enum(AuditAction), nullable=False)
-    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    entity_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    old_value: Mapped[dict | None] = mapped_column(JSON)
-    new_value: Mapped[dict | None] = mapped_column(JSON)
-    ip_address: Mapped[str | None] = mapped_column(String(45))
-    user_agent: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    actor: Mapped["User | None"] = relationship(back_populates="audit_events")
-    service_request: Mapped["ServiceRequest | None"] = relationship(back_populates="audit_events")
+class Feedback(Base, IdMixin):
+    __tablename__ = "feedback"
 
+    org_id: Mapped[uuid.UUID] = _org_column()
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    requester_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    rating: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        _org_fk("request_id", "service_requests"),
+        CheckConstraint("rating BETWEEN 1 AND 5", name="rating_range"),
+        UniqueConstraint("request_id"),
+    )
+
+
+class AssetServiceHistory(Base, IdMixin):
+    """One row per completed job on an asset; details hang off the request."""
+
+    __tablename__ = "asset_service_history"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    technician_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED), nullable=False
+    )
+    serviced_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        _org_fk("asset_id", "assets"),
+        _org_fk("request_id", "service_requests"),
+        Index("ix_asset_history_asset", "asset_id", "serviced_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit and idempotency
+# ---------------------------------------------------------------------------
+
+
+class AuditEvent(Base, IdMixin):
+    """Append-only. A database trigger rejects UPDATE and DELETE (see migration)."""
+
+    __tablename__ = "audit_events"
+
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="RESTRICT", **DEFERRED)
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT", **DEFERRED)
+    )
+    action: Mapped[str] = mapped_column(String(60), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # False for internal-only entries that requesters must not see in a timeline.
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_audit_org_created", "org_id", "created_at"),
+        Index("ix_audit_request_created", "request_id", "created_at"),
+        Index("ix_audit_org_action", "org_id", "action"),
+    )
+
+
+class IdempotencyKey(Base, IdMixin):
+    """Persistent replay record for retryable commands (API-03)."""
+
+    __tablename__ = "idempotency_keys"
+
+    org_id: Mapped[uuid.UUID] = _org_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE", **DEFERRED), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(60), nullable=False)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        TZDateTime, default=utcnow, server_default=func.now()
+    )
+
+    __table_args__ = (UniqueConstraint("org_id", "user_id", "scope", "key"),)

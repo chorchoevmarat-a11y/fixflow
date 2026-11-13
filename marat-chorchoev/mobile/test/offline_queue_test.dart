@@ -1,133 +1,102 @@
+import 'dart:io';
+
+import 'package:fixflow_mobile/core/models.dart';
+import 'package:fixflow_mobile/core/store.dart';
+import 'package:fixflow_mobile/core/sync.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fixflow_mobile/features/sync/offline_queue_manager.dart';
 
-// In-memory fake database implementation for queue testing
-class FakeOfflineQueueStorage {
-  final List<OfflineCommand> _storage = [];
-  int _autoIncrement = 1;
-
-  Future<String> enqueue({
-    required String commandType,
-    required String jobId,
-    required Map<String, dynamic> payload,
-    String? commandId,
-  }) async {
-    final key = commandId ?? 'uuid-${_autoIncrement}';
-    final cmd = OfflineCommand(
-      localId: _autoIncrement++,
-      commandId: key,
-      commandType: commandType,
-      jobId: jobId,
-      payload: payload,
-      createdAt: DateTime.now(),
-    );
-    _storage.add(cmd);
-    return key;
-  }
-
-  Future<List<OfflineCommand>> getAll() async {
-    return List.unmodifiable(_storage);
-  }
-
-  Future<void> remove(int localId) async {
-    _storage.removeWhere((item) => item.localId == localId);
-  }
-
-  Future<void> recordFailure(int localId, String error) async {
-    final idx = _storage.indexWhere((item) => item.localId == localId);
-    if (idx != -1) {
-      final old = _storage[idx];
-      _storage[idx] = OfflineCommand(
-        localId: old.localId,
-        commandId: old.commandId,
-        commandType: old.commandType,
-        jobId: old.jobId,
-        payload: old.payload,
-        createdAt: old.createdAt,
-        retryCount: old.retryCount + 1,
-        lastError: error,
-      );
-    }
-  }
-}
+import 'support.dart';
 
 void main() {
-  group('Offline Queue Manager Tests', () {
-    late FakeOfflineQueueStorage queueStorage;
+  late Directory dir;
 
-    setUp(() {
-      queueStorage = FakeOfflineQueueStorage();
-    });
+  setUp(() async {
+    dir = await Directory.systemTemp.createTemp('fixflow_queue_');
+  });
+  tearDown(() async {
+    if (await dir.exists()) await dir.delete(recursive: true);
+  });
 
-    test('Enqueue stores command and returns idempotency key', () async {
-      final key = await queueStorage.enqueue(
-        commandType: 'update_status',
-        jobId: 'job-001',
-        payload: {'status': 'in_progress'},
-      );
+  test('queued notes and photos survive a process restart', () async {
+    final server = FakeServer();
+    var store = await LocalStore.open(dir);
+    var sync = SyncService(server, store);
+    final photo = await fakePhoto(dir, 'camera.jpg');
 
-      expect(key, isNotEmpty);
-      final pending = await queueStorage.getAll();
-      expect(pending.length, 1);
-      expect(pending.first.commandType, 'update_status');
-      expect(pending.first.jobId, 'job-001');
-      expect(pending.first.payload['status'], 'in_progress');
-    });
+    await sync.enqueue(
+      userId: 'u1',
+      orgId: 'o1',
+      job: Job(jobJson()),
+      body: 'Belt is worn; replacement needed.',
+      internal: false,
+      photoPaths: [photo.path],
+      commandId: 'note-offline-0001',
+    );
+    // The camera's temp file may disappear; the copy kept by the app must not.
+    await photo.delete();
 
-    test('Queue maintains FIFO order for multiple offline events', () async {
-      await queueStorage.enqueue(
-        commandType: 'update_status',
-        jobId: 'job-001',
-        payload: {'status': 'en_route'},
-      );
-      await queueStorage.enqueue(
-        commandType: 'update_status',
-        jobId: 'job-001',
-        payload: {'status': 'in_progress'},
-      );
-      await queueStorage.enqueue(
-        commandType: 'add_note',
-        jobId: 'job-001',
-        payload: {'content': 'Arrived on site'},
-      );
+    // "Restart": a brand-new store instance reads the same directory.
+    store = await LocalStore.open(dir);
+    final queue = store.queue;
+    expect(queue, hasLength(1));
+    expect(queue.single.id, 'note-offline-0001');
+    expect(queue.single.body, 'Belt is worn; replacement needed.');
+    expect(queue.single.state, QueueState.pending);
+    expect(queue.single.assignmentId, 'asg-1');
+    expect(File(queue.single.imagePaths.single).existsSync(), isTrue);
 
-      final pending = await queueStorage.getAll();
-      expect(pending.length, 3);
-      expect(pending[0].payload['status'], 'en_route');
-      expect(pending[1].payload['status'], 'in_progress');
-      expect(pending[2].commandType, 'add_note');
-    });
+    // After the restart the note is delivered exactly once.
+    sync = SyncService(server, store);
+    final report = await sync.replay(userId: 'u1', orgId: 'o1');
+    expect(report.delivered, 1);
+    expect(store.queue, isEmpty);
+    expect(server.notesByCommand, hasLength(1));
+    expect(server.imagesByCommand, hasLength(1));
+  });
 
-    test('Removal deletes item from pending queue', () async {
-      await queueStorage.enqueue(
-        commandType: 'update_status',
-        jobId: 'job-001',
-        payload: {'status': 'in_progress'},
-      );
+  test(
+      'a note interrupted mid-delivery is pending again after restart, not lost',
+      () async {
+    var store = await LocalStore.open(dir);
+    final sync = SyncService(FakeServer(), store);
+    await sync.enqueue(
+        userId: 'u1',
+        orgId: 'o1',
+        job: Job(jobJson()),
+        body: 'draft',
+        internal: false,
+        photoPaths: const [],
+        commandId: 'note-crash-0001');
+    final all = store.queue;
+    all.single.state = QueueState.syncing; // app was killed while sending
+    await store.saveQueue(all);
 
-      var pending = await queueStorage.getAll();
-      expect(pending.length, 1);
+    store = await LocalStore.open(dir);
+    expect(store.queue.single.state, QueueState.pending);
+  });
 
-      await queueStorage.remove(pending.first.localId);
+  test('queues are scoped to the user and organization', () async {
+    final store = await LocalStore.open(dir);
+    final server = FakeServer();
+    final sync = SyncService(server, store);
+    await sync.enqueue(
+        userId: 'u1',
+        orgId: 'o1',
+        job: Job(jobJson()),
+        body: 'mine',
+        internal: false,
+        photoPaths: const [],
+        commandId: 'note-scope-0001');
 
-      pending = await queueStorage.getAll();
-      expect(pending.isEmpty, true);
-    });
+    final other = await sync.replay(userId: 'u2', orgId: 'o1');
+    expect(other.delivered, 0);
+    expect(server.notesByCommand, isEmpty);
+    expect(store.queue, hasLength(1));
+  });
 
-    test('Failure records error and increments retry counter', () async {
-      await queueStorage.enqueue(
-        commandType: 'update_status',
-        jobId: 'job-001',
-        payload: {'status': 'completed'},
-      );
-
-      final item = (await queueStorage.getAll()).first;
-      expect(item.retryCount, 0);
-
-      await queueStorage.recordFailure(item.localId, 'Network Timeout');
-      final updated = (await queueStorage.getAll()).first;
-      expect(updated.retryCount, 1);
-      expect(updated.lastError, 'Network Timeout');
-    });
+  test('a corrupted state file does not brick the app', () async {
+    await File('${dir.path}/state.json').writeAsString('{not json');
+    final store = await LocalStore.open(dir);
+    expect(store.queue, isEmpty);
   });
 }

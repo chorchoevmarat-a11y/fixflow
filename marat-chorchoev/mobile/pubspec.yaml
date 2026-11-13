@@ -1,55 +1,30 @@
 name: fixflow_mobile
-description: FixFlow - Field Service Operations Platform for Technicians
-publish_to: 'none'
+description: FixFlow technician app (Android). Offline-first job notes and evidence.
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
-  flutter: '>=3.22.0'
+  sdk: ">=3.4.0 <4.0.0"
 
+# State management: Riverpod (Notifier/AsyncNotifier, no code generation).
+# Local persistence: JSON file store with atomic writes (see lib/core/store.dart).
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^2.5.1
-  riverpod_annotation: ^2.3.5
-  go_router: ^14.1.4
-  dio: ^5.4.3
-  drift: ^2.18.0
-  sqlite3_flutter_libs: ^0.5.24
-  path_provider: ^2.1.3
+  flutter_riverpod: ^2.6.1
+  http: ^1.2.2
   path: ^1.9.0
-  shared_preferences: ^2.2.3
-  flutter_local_notifications: ^17.2.1
+  path_provider: ^2.1.4
   image_picker: ^1.1.2
-  cached_network_image: ^3.4.0
-  intl: ^0.19.0
-  uuid: ^4.5.0
   connectivity_plus: ^6.1.0
   flutter_secure_storage: ^9.2.2
-  json_annotation: ^4.9.0
-  cupertino_icons: ^1.0.8
+  intl: ^0.19.0
+  uuid: ^4.5.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
-  build_runner: ^2.4.13
-  drift_dev: ^2.18.0
-  riverpod_generator: ^2.4.3
-  json_serializable: ^6.8.0
-  mockito: ^5.4.4
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/images/
-  fonts:
-    - family: Inter
-      fonts:
-        - asset: assets/fonts/Inter-Regular.ttf
-        - asset: assets/fonts/Inter-Medium.ttf
-          weight: 500
-        - asset: assets/fonts/Inter-SemiBold.ttf
-          weight: 600
-        - asset: assets/fonts/Inter-Bold.ttf
-          weight: 700

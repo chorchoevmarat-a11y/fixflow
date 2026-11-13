@@ -1,407 +1,160 @@
-'use client'
+"use client";
 
-import React, { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
-import {
-  ArrowLeft,
-  Calendar,
-  Building,
-  User,
-  Tag,
-  Paperclip,
-  Send,
-  CheckCircle,
-  XCircle,
-  UserCheck,
-} from 'lucide-react'
-import { requestsApi, assignmentsApi } from '@/lib/api'
-import type { ServiceRequest, Note, ActivityLog, Assignment } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { RequestStatusBadge } from '@/components/request-status-badge'
-import { PriorityBadge } from '@/components/priority-badge'
-import { SlaIndicator } from '@/components/sla-indicator'
-import { ActivityTimeline } from '@/components/activity-timeline'
-import { formatDate, formatRelativeTime } from '@/lib/utils'
-import { Skeleton } from '@/components/ui/skeleton'
+import Link from "next/link";
+import { use } from "react";
+import { PriorityBadge, SlaBadge, StatusBadge } from "@/components/badges";
+import { DispatchPanel } from "@/components/dispatch-panel";
+import { EstimatePanel } from "@/components/estimate-panel";
+import { ReclassifyCard, RequestActions } from "@/components/request-actions";
+import { EvidenceCard, FeedbackCard, MaterialsCard, NotesCard, Timeline } from "@/components/request-sections";
+import { Card, ErrorNote, Notice, PageHeader, Spinner } from "@/components/ui";
+import { fmtDateTime, fmtDuration } from "@/lib/format";
+import { useApiQuery } from "@/lib/hooks";
+import { isStaff, useMembership } from "@/lib/session";
+import type { RequestDetail } from "@/lib/types";
 
-export default function RequestDetailPage() {
-  const params = useParams()
-  const router = useRouter()
-  const id = params.id as string
+export default function RequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const membership = useMembership();
+  const tz = membership?.timezone ?? "UTC";
+  const query = useApiQuery<RequestDetail>(`/requests/${id}`);
+  const r = query.data;
 
-  const [request, setRequest] = useState<ServiceRequest | null>(null)
-  const [notes, setNotes] = useState<Note[]>([])
-  const [activities, setActivities] = useState<ActivityLog[]>([])
-  const [assignments, setAssignments] = useState<Assignment[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const [newNote, setNewNote] = useState('')
-  const [isInternal, setIsInternal] = useState(false)
-  const [sendingNote, setSendingNote] = useState(false)
-
-  const loadData = async () => {
-    try {
-      const [reqData, notesData, actData, assignData] = await Promise.allSettled([
-        requestsApi.get(id),
-        requestsApi.getNotes(id),
-        requestsApi.getActivity(id),
-        assignmentsApi.list(id),
-      ])
-
-      if (reqData.status === 'fulfilled') setRequest(reqData.value)
-      if (notesData.status === 'fulfilled') setNotes(notesData.value)
-      if (actData.status === 'fulfilled') setActivities(actData.value)
-      if (assignData.status === 'fulfilled') setAssignments(assignData.value)
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (id) {
-      loadData()
-    }
-  }, [id])
-
-  const handleAddNote = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newNote.trim()) return
-
-    setSendingNote(true)
-    try {
-      const note = await requestsApi.addNote(id, {
-        content: newNote.trim(),
-        is_internal: isInternal,
-      })
-      setNotes((prev) => [...prev, note])
-      setNewNote('')
-      setIsInternal(false)
-    } catch {
-      // ignore
-    } finally {
-      setSendingNote(false)
-    }
-  }
-
-  const handleClose = async () => {
-    const res = prompt('Enter resolution notes:')
-    if (res !== null) {
-      try {
-        await requestsApi.close(id, res)
-        loadData()
-      } catch {
-        alert('Failed to close request')
-      }
-    }
-  }
-
-  const handleCancel = async () => {
-    const reason = prompt('Enter cancellation reason:')
-    if (reason !== null) {
-      try {
-        await requestsApi.cancel(id, reason)
-        loadData()
-      } catch {
-        alert('Failed to cancel request')
-      }
-    }
-  }
-
-  if (loading) {
+  if (query.isLoading) return <Spinner />;
+  if (query.error) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    )
+      <>
+        <ErrorNote error={query.error} onRetry={() => void query.refetch()} />
+        <Link href="/requests">Back to requests</Link>
+      </>
+    );
   }
-
-  if (!request) {
-    return (
-      <div className="text-center py-12">
-        <h2 className="text-xl font-bold">Request not found</h2>
-        <Button className="mt-4" asChild>
-          <Link href="/requests">Back to list</Link>
-        </Button>
-      </div>
-    )
-  }
+  if (!r) return null;
+  const staff = isStaff(membership?.role);
+  const appointment = r.assignment?.is_active ? r.assignment : null;
 
   return (
-    <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" asChild>
-            <Link href="/requests">
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
-          </Button>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-sm font-semibold text-muted-foreground">
-                {request.request_number || request.id.slice(0, 8)}
-              </span>
-              <RequestStatusBadge status={request.status} />
-              <PriorityBadge priority={request.priority} />
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight mt-1">
-              {request.title}
-            </h1>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          {request.status === 'new' && (
-            <Button variant="outline" asChild>
-              <Link href={`/requests/${id}/triage`}>Triage</Link>
-            </Button>
-          )}
-          {(request.status === 'new' || request.status === 'triaged') && (
-            <Button asChild>
-              <Link href={`/requests/${id}/assign`} className="flex items-center gap-1.5">
-                <UserCheck className="w-4 h-4" />
-                Assign Technician
-              </Link>
-            </Button>
-          )}
-          {request.status !== 'closed' && request.status !== 'cancelled' && (
-            <>
-              <Button variant="secondary" onClick={handleClose} className="flex items-center gap-1.5">
-                <CheckCircle className="w-4 h-4 text-emerald-600" />
-                Mark Resolved
-              </Button>
-              <Button variant="ghost" onClick={handleCancel} className="text-destructive hover:bg-destructive/10">
-                Cancel
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Tabs Content */}
-        <div className="lg:col-span-2 space-y-6">
-          <Tabs defaultValue="details">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="details">Details & Notes</TabsTrigger>
-              <TabsTrigger value="assignments">
-                Assignments ({assignments.length})
-              </TabsTrigger>
-              <TabsTrigger value="activity">Activity Log</TabsTrigger>
-            </TabsList>
-
-            {/* Details & Notes */}
-            <TabsContent value="details" className="space-y-6 mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Description</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="whitespace-pre-wrap text-sm text-foreground">
-                    {request.description}
-                  </p>
-                </CardContent>
-              </Card>
-
-              {/* Notes Section */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Discussion & Work Notes</CardTitle>
-                  <CardDescription>
-                    Add operational notes or tenant communications
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-3">
-                    {notes.length === 0 ? (
-                      <p className="text-xs text-muted-foreground italic">
-                        No notes added yet.
-                      </p>
-                    ) : (
-                      notes.map((note) => (
-                        <div
-                          key={note.id}
-                          className={`p-3 rounded-lg border text-sm ${
-                            note.is_internal
-                              ? 'bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40'
-                              : 'bg-muted/40'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="font-semibold text-foreground">
-                              {note.author?.full_name || 'Staff Member'}
-                              {note.is_internal && (
-                                <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-amber-200 text-amber-900 font-medium">
-                                  Internal Only
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {formatRelativeTime(note.created_at)}
-                            </span>
-                          </div>
-                          <p className="text-foreground whitespace-pre-wrap">
-                            {note.content}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <form onSubmit={handleAddNote} className="space-y-3 pt-3 border-t">
-                    <textarea
-                      rows={3}
-                      className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      placeholder="Write an update, note, or work comment..."
-                      value={newNote}
-                      onChange={(e) => setNewNote(e.target.value)}
-                    />
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={isInternal}
-                          onChange={(e) => setIsInternal(e.target.checked)}
-                          className="rounded border-input text-primary"
-                        />
-                        Internal note (hide from tenants)
-                      </label>
-                      <Button type="submit" size="sm" disabled={sendingNote || !newNote.trim()}>
-                        <Send className="w-3.5 h-3.5 mr-1" />
-                        {sendingNote ? 'Posting...' : 'Post Note'}
-                      </Button>
-                    </div>
-                  </form>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Assignments Tab */}
-            <TabsContent value="assignments" className="space-y-4 mt-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">Field Assignments</CardTitle>
-                    <CardDescription>
-                      Technicians dispatched to this service request
-                    </CardDescription>
-                  </div>
-                  <Button size="sm" asChild>
-                    <Link href={`/requests/${id}/assign`}>+ Add Assignment</Link>
-                  </Button>
-                </CardHeader>
-                <CardContent>
-                  {assignments.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-4 text-center">
-                      No technician has been assigned yet.
-                    </p>
-                  ) : (
-                    <div className="divide-y divide-border">
-                      {assignments.map((a) => (
-                        <div key={a.id} className="py-3 flex items-center justify-between">
-                          <div>
-                            <div className="text-sm font-semibold">
-                              {a.technician?.full_name || 'Assigned Technician'}
-                            </div>
-                            <div className="text-xs text-muted-foreground capitalize">
-                              Status: {a.status}
-                            </div>
-                            {a.scheduled_start && (
-                              <div className="text-xs text-muted-foreground">
-                                Scheduled: {formatDate(a.scheduled_start)}
-                              </div>
-                            )}
-                          </div>
-                          <span className="text-xs px-2 py-1 bg-muted rounded font-mono capitalize">
-                            {a.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Activity Log Tab */}
-            <TabsContent value="activity" className="mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Audit & Activity Log</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ActivityTimeline activities={activities} />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </div>
-
-        {/* Right 1 Col: Metadata Sidebar */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Request Info
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div>
-                <span className="text-xs text-muted-foreground block">SLA Target</span>
-                <SlaIndicator
-                  deadline={request.sla_deadline}
-                  breached={request.sla_breached}
-                  resolvedAt={request.resolved_at}
-                />
-              </div>
-
-              <div>
-                <span className="text-xs text-muted-foreground block">Property</span>
-                <span className="font-medium">
-                  {request.property?.name || 'General Facility'}
-                </span>
-                {request.unit_number && (
-                  <span className="text-xs text-muted-foreground block">
-                    Unit: {request.unit_number}
-                  </span>
+    <>
+      <PageHeader
+        title={`${r.reference} · ${r.title}`}
+        subtitle={
+          <span className="row">
+            <StatusBadge status={r.status} />
+            <PriorityBadge priority={r.priority} />
+            <SlaBadge sla={r.sla} timeZone={tz} detailed />
+            {r.is_preventive ? <span className="badge">Preventive maintenance</span> : null}
+          </span>
+        }
+        actions={
+          <Link className="btn btn-secondary" href="/requests">
+            All requests
+          </Link>
+        }
+      />
+      {r.status === "REOPENED" ? <Notice kind="warn">The requester asked for rework. A dispatcher must triage it again.</Notice> : null}
+      {r.sla.state === "OVERDUE" && !r.sla.stopped_at ? <Notice kind="warn">This request is past its SLA due time.</Notice> : null}
+      <div className="split">
+        <div className="stack">
+          <Card title="Details">
+            <p style={{ whiteSpace: "pre-wrap" }}>{r.description}</p>
+            <dl className="kv" style={{ marginTop: "0.75rem" }}>
+              <dt>Organization</dt>
+              <dd>{r.organization.name}</dd>
+              <dt>Requested by</dt>
+              <dd>
+                {r.requester.full_name}
+                {r.requester.email ? ` (${r.requester.email})` : ""}
+              </dd>
+              <dt>Category</dt>
+              <dd>
+                {r.category.name}
+                {!r.category.is_enabled ? " (disabled)" : ""}
+              </dd>
+              <dt>Property</dt>
+              <dd>
+                {r.property.name} — {r.property.address}
+                {r.property.contact_instructions ? <div className="muted small">{r.property.contact_instructions}</div> : null}
+              </dd>
+              <dt>Equipment</dt>
+              <dd>
+                {r.asset ? (
+                  <>
+                    {staff ? <Link href={`/assets/${r.asset.id}`}>{r.asset.code}</Link> : r.asset.code} — {r.asset.name} ({r.asset.asset_type}
+                    {r.asset.serial_number ? `, S/N ${r.asset.serial_number}` : ""})
+                  </>
+                ) : (
+                  "—"
                 )}
-              </div>
-
-              <div>
-                <span className="text-xs text-muted-foreground block">Category</span>
-                <span className="font-medium">
-                  {request.category?.name || 'Uncategorized'}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-xs text-muted-foreground block">Requester</span>
-                <span className="font-medium">
-                  {request.requester?.full_name || 'Requester'}
-                </span>
-                <span className="text-xs text-muted-foreground block">
-                  {request.requester?.email}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-xs text-muted-foreground block">Date Created</span>
-                <span className="text-xs font-mono">
-                  {formatDate(request.created_at)}
-                </span>
-              </div>
-            </CardContent>
+              </dd>
+              <dt>Appointment</dt>
+              <dd>
+                {appointment
+                  ? `${fmtDateTime(appointment.start_at, tz)} → ${fmtDateTime(appointment.end_at, tz)} · ${appointment.technician_name ?? ""}`
+                  : "Not scheduled"}
+              </dd>
+              {r.preferred_start_at ? (
+                <>
+                  <dt>Preferred visit</dt>
+                  <dd>
+                    {fmtDateTime(r.preferred_start_at, tz)}
+                    {r.preferred_end_at ? ` → ${fmtDateTime(r.preferred_end_at, tz)}` : ""}
+                  </dd>
+                </>
+              ) : null}
+              <dt>SLA</dt>
+              <dd>
+                {r.sla.stopped_at
+                  ? `Final outcome: ${r.sla.state.replace("_", " ").toLowerCase()}`
+                  : r.sla.paused
+                    ? "Paused while the estimate awaits approval"
+                    : `Due ${fmtDateTime(r.sla.due_at, tz)}`}
+                <div className="muted small">
+                  Budget {fmtDuration(r.sla.budget_seconds)} of business time · {fmtDuration(r.sla.consumed_seconds)} used
+                </div>
+              </dd>
+              {r.estimate ? (
+                <>
+                  <dt>Estimate</dt>
+                  <dd>
+                    v{r.estimate.version} · {r.estimate.status.replace("_", " ").toLowerCase()}
+                  </dd>
+                </>
+              ) : null}
+              {r.completion_note ? (
+                <>
+                  <dt>Completion note</dt>
+                  <dd>{r.completion_note}</dd>
+                </>
+              ) : null}
+              {r.duplicate_of ? (
+                <>
+                  <dt>Duplicate of</dt>
+                  <dd>
+                    <Link href={`/requests/${r.duplicate_of.id}`}>{r.duplicate_of.reference}</Link> · {r.duplicate_of.title}
+                  </dd>
+                </>
+              ) : null}
+              {staff && r.triage_notes ? (
+                <>
+                  <dt>Triage notes</dt>
+                  <dd>{r.triage_notes}</dd>
+                </>
+              ) : null}
+            </dl>
           </Card>
+          <RequestActions request={r} />
+          {staff && r.allowed_actions.includes("reclassify") ? <ReclassifyCard key={`${r.category.id}-${r.priority}-${r.duplicate_of?.id ?? ""}`} request={r} /> : null}
+          <DispatchPanel request={r} />
+          <EstimatePanel request={r} />
+          <NotesCard request={r} />
+          <FeedbackCard request={r} />
+        </div>
+        <div className="stack">
+          <EvidenceCard request={r} />
+          <MaterialsCard request={r} />
+          <Timeline requestId={r.id} />
         </div>
       </div>
-    </div>
-  )
+    </>
+  );
 }

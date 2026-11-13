@@ -1,197 +1,271 @@
+"""Test harness.
+
+Tests run against a real PostgreSQL database because the behaviour under test (row
+locks, exclusion constraints, ON CONFLICT, deferred foreign keys) only exists there.
+
+Provide the connection string through TEST_DATABASE_URL. As a guard against wiping
+real data, the database name must end in ``_test``; the suite refuses to run otherwise.
+"""
+
 import asyncio
+import os
+import tempfile
 import uuid
-from collections.abc import AsyncGenerator
-from decimal import Decimal
+from collections.abc import AsyncGenerator, Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, time
+from urllib.parse import urlsplit
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.security import create_access_token, hash_password
-from app.database import get_db
-from app.main import app
-from app.models.base import Base
-from app.models.models import (
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql+asyncpg://fixflow:fixflow@localhost:5432/fixflow_test"
+)
+if TEST_DATABASE_URL.startswith("postgresql://"):
+    TEST_DATABASE_URL = TEST_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+_database = urlsplit(TEST_DATABASE_URL).path.lstrip("/")
+if not _database.endswith("_test"):
+    raise pytest.UsageError(
+        f"Refusing to run: TEST_DATABASE_URL points at database '{_database}'. "
+        "The test suite drops all tables, so the database name must end in '_test'."
+    )
+
+# Must be set before the application modules are imported.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["UPLOAD_DIR"] = tempfile.mkdtemp(prefix="fixflow-test-uploads-")
+os.environ["ENVIRONMENT"] = "test"
+
+import httpx  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
+
+from app.core.security import hash_password, hash_token  # noqa: E402
+from app.database import SessionLocal, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models.base import clock  # noqa: E402
+from app.models.models import (  # noqa: E402
     Asset,
-    AssetStatus,
+    AuthSession,
+    BusinessHours,
+    CategorySkill,
     InventoryItem,
-    MemberRole,
     Organization,
     OrganizationMembership,
     Property,
+    Role,
     ServiceCategory,
+    Skill,
+    TechnicianAvailability,
+    TechnicianProfile,
+    TechnicianSkill,
     User,
 )
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},
-)
-
-TestingSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+PASSWORD = "Test-Password-123"
+_PASSWORD_HASH = hash_password(PASSWORD)
 
 
-@pytest_asyncio.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+async def _reset_schema() -> None:
+    admin = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    async with admin.begin() as connection:
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
+    await admin.dispose()
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+@pytest.fixture(scope="session", autouse=True)
+def _migrated_database() -> Iterator[None]:
+    """Build the schema from the real Alembic migrations (not create_all)."""
+    from alembic.config import Config
 
-    async with TestingSessionLocal() as session:
-        yield session
+    from alembic import command
 
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-
-@pytest_asyncio.fixture(scope="function")
-async def setup_test_data(db_session: AsyncSession):
-    # Create Organization 1
-    org1 = Organization(
-        id=uuid.uuid4(),
-        name="Apex FM",
-        slug="apex-fm",
-        timezone="America/New_York",
+    asyncio.run(_reset_schema())
+    config = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+    config.set_main_option(
+        "script_location", os.path.join(os.path.dirname(__file__), "..", "alembic")
     )
-    # Create Organization 2
-    org2 = Organization(
-        id=uuid.uuid4(),
-        name="Beacon Services",
-        slug="beacon-services",
-        timezone="America/Chicago",
-    )
-    db_session.add_all([org1, org2])
-    await db_session.flush()
+    command.upgrade(config, "head")
+    yield
 
-    pwd = hash_password("secret123")
-    user_owner = User(
-        id=uuid.uuid4(),
-        email="owner@apex.io",
-        hashed_password=pwd,
-        full_name="Alice Owner",
-    )
-    user_tech = User(
-        id=uuid.uuid4(),
-        email="tech@apex.io",
-        hashed_password=pwd,
-        full_name="Bob Tech",
-    )
-    user_client = User(
-        id=uuid.uuid4(),
-        email="client@apex.io",
-        hashed_password=pwd,
-        full_name="Charlie Client",
-    )
-    db_session.add_all([user_owner, user_tech, user_client])
-    await db_session.flush()
 
-    m_owner = OrganizationMembership(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        user_id=user_owner.id,
-        role=MemberRole.OWNER,
-    )
-    m_tech = OrganizationMembership(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        user_id=user_tech.id,
-        role=MemberRole.TECHNICIAN,
-        hourly_rate=Decimal("50.00"),
-        skills=["HVAC", "Plumbing"],
-    )
-    m_client = OrganizationMembership(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        user_id=user_client.id,
-        role=MemberRole.CLIENT,
-    )
-    db_session.add_all([m_owner, m_tech, m_client])
+@pytest.fixture(autouse=True)
+def _real_clock() -> Iterator[None]:
+    yield
+    clock.release()
 
-    # Category, Property, Asset, Inventory for Org 1
-    cat = ServiceCategory(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        name="HVAC",
-        sla_hours=24.0,
-    )
-    prop = Property(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        name="Tower One",
-        address="100 Wall St",
-    )
-    db_session.add_all([cat, prop])
-    await db_session.flush()
 
+@dataclass
+class Member:
+    user_id: uuid.UUID
+    email: str
+    role: Role
+    org_id: uuid.UUID
+    membership_id: uuid.UUID
+    token: str
+    technician_id: uuid.UUID | None = None
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}", "X-Organization-ID": str(self.org_id)}
+
+
+@dataclass
+class OrgFixture:
+    id: uuid.UUID
+    admin: Member
+    dispatcher: Member
+    requester: Member
+    requester2: Member
+    tech: Member
+    tech2: Member
+    category_id: uuid.UUID  # requires the "Electrical" skill
+    open_category_id: uuid.UUID  # no required skills
+    property_id: uuid.UUID
+    asset_id: uuid.UUID
+    item_id: uuid.UUID
+    skill_id: uuid.UUID
+    extra: dict[str, uuid.UUID] = field(default_factory=dict)
+
+
+@dataclass
+class World:
+    a: OrgFixture
+    b: OrgFixture
+    client: httpx.AsyncClient
+
+    async def call(self, member: Member, method: str, path: str, **kwargs) -> httpx.Response:
+        headers = {**member.headers, **kwargs.pop("headers", {})}
+        return await self.client.request(method, f"/api/v1{path}", headers=headers, **kwargs)
+
+    async def get(self, member: Member, path: str, **kwargs) -> httpx.Response:
+        return await self.call(member, "GET", path, **kwargs)
+
+    async def post(
+        self, member: Member, path: str, json: dict | None = None, **kwargs
+    ) -> httpx.Response:
+        return await self.call(
+            member, "POST", path, json=json if json is not None else {}, **kwargs
+        )
+
+    async def ok(self, member: Member, method: str, path: str, **kwargs) -> dict:
+        response = await self.call(member, method, path, **kwargs)
+        assert response.status_code < 300, (
+            f"{method} {path} -> {response.status_code} {response.text}"
+        )
+        return response.json()
+
+
+async def _build_org(db, slug: str) -> OrgFixture:
+    org = Organization(name=f"Org {slug.upper()}", slug=f"org-{slug}", timezone="Asia/Bishkek")
+    db.add(org)
+    await db.flush()
+    for weekday in range(5):
+        db.add(BusinessHours(org_id=org.id, weekday=weekday, opens_at=time(9), closes_at=time(18)))
+    skill = Skill(org_id=org.id, name="Electrical")
+    db.add(skill)
+    await db.flush()
+
+    async def member(name: str, role: Role, with_skill: bool = True) -> Member:
+        user = User(
+            email=f"{name}@{slug}.example.com",
+            full_name=f"{name.title()} {slug.upper()}",
+            password_hash=_PASSWORD_HASH,
+        )
+        db.add(user)
+        await db.flush()
+        membership = OrganizationMembership(org_id=org.id, user_id=user.id, role=role)
+        db.add(membership)
+        await db.flush()
+        token = f"test-{uuid.uuid4().hex}"
+        db.add(
+            AuthSession(
+                user_id=user.id,
+                token_hash=hash_token(token),
+                expires_at=datetime(2100, 1, 1, tzinfo=UTC),
+            )
+        )
+        technician_id = None
+        if role == Role.TECHNICIAN:
+            profile = TechnicianProfile(org_id=org.id, membership_id=membership.id, user_id=user.id)
+            db.add(profile)
+            await db.flush()
+            technician_id = profile.id
+            if with_skill:
+                db.add(TechnicianSkill(org_id=org.id, technician_id=profile.id, skill_id=skill.id))
+            for weekday in range(5):
+                db.add(
+                    TechnicianAvailability(
+                        org_id=org.id,
+                        technician_id=profile.id,
+                        weekday=weekday,
+                        starts_at=time(9),
+                        ends_at=time(18),
+                    )
+                )
+        return Member(user.id, user.email, role, org.id, membership.id, token, technician_id)
+
+    admin = await member("admin", Role.ADMIN)
+    dispatcher = await member("dispatcher", Role.DISPATCHER)
+    requester = await member("requester", Role.REQUESTER)
+    requester2 = await member("requester2", Role.REQUESTER)
+    tech = await member("tech", Role.TECHNICIAN)
+    tech2 = await member("tech2", Role.TECHNICIAN)
+
+    category = ServiceCategory(org_id=org.id, name="Electrical repair", description="Wiring")
+    open_category = ServiceCategory(org_id=org.id, name="General", description="Anything")
+    prop = Property(org_id=org.id, name="Main Tower", address=f"1 {slug.upper()} Street, Bishkek")
+    db.add_all([category, open_category, prop])
+    await db.flush()
+    db.add(CategorySkill(org_id=org.id, category_id=category.id, skill_id=skill.id))
     asset = Asset(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        property_id=prop.id,
-        name="HVAC Rooftop unit 1",
-        asset_tag="HVAC-01",
-        status=AssetStatus.ACTIVE,
+        org_id=org.id, property_id=prop.id, code="AHU-001", name="Air handler", asset_type="HVAC"
     )
     item = InventoryItem(
-        id=uuid.uuid4(),
-        organization_id=org1.id,
-        name="Filter X",
-        sku="FLT-X",
-        unit="piece",
-        unit_cost=Decimal("15.00"),
-        stock_quantity=Decimal("100.000"),
+        org_id=org.id,
+        code="FLT-1",
+        name="Filter",
+        unit="pcs",
+        stock_quantity=10,
+        reorder_threshold=3,
+        unit_price_minor=85000,
     )
-    db_session.add_all([asset, item])
-    await db_session.commit()
-
-    return {
-        "org1": org1,
-        "org2": org2,
-        "owner": user_owner,
-        "tech": user_tech,
-        "client": user_client,
-        "m_owner": m_owner,
-        "m_tech": m_tech,
-        "m_client": m_client,
-        "category": cat,
-        "property": prop,
-        "asset": asset,
-        "item": item,
-    }
-
-
-@pytest_asyncio.fixture(scope="function")
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    async def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-    app.dependency_overrides.clear()
+    db.add_all([asset, item])
+    await db.flush()
+    return OrgFixture(
+        id=org.id,
+        admin=admin,
+        dispatcher=dispatcher,
+        requester=requester,
+        requester2=requester2,
+        tech=tech,
+        tech2=tech2,
+        category_id=category.id,
+        open_category_id=open_category.id,
+        property_id=prop.id,
+        asset_id=asset.id,
+        item_id=item.id,
+        skill_id=skill.id,
+    )
 
 
-@pytest.fixture
-def auth_headers():
-    def _make_headers(user: User, org: Organization, role: MemberRole) -> dict[str, str]:
-        token = create_access_token({
-            "sub": str(user.id),
-            "email": user.email,
-            "org_id": str(org.id),
-            "role": role.value,
-        })
-        return {
-            "Authorization": f"Bearer {token}",
-            "X-Organization-ID": str(org.id),
-        }
-    return _make_headers
+@pytest_asyncio.fixture
+async def world() -> AsyncGenerator[World]:
+    """Two fully separate organizations and an in-process HTTP client."""
+    async with engine.begin() as connection:
+        tables = await connection.scalars(
+            text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
+            )
+        )
+        names = ", ".join(f'"{name}"' for name in tables)
+        await connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    async with SessionLocal() as db:
+        org_a = await _build_org(db, "a")
+        org_b = await _build_org(db, "b")
+        await db.commit()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield World(a=org_a, b=org_b, client=client)

@@ -1,17 +1,22 @@
-import type { NextConfig } from 'next'
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
-  images: {
-    remotePatterns: [
+  output: "standalone",
+  poweredByHeader: false,
+  async headers() {
+    return [
       {
-        protocol: 'http',
-        hostname: 'localhost',
-        port: '8000',
-        pathname: '/api/v1/files/**',
+        // Authenticated screens must never be stored by shared or browser caches (WEB-07).
+        source: "/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "same-origin" },
+          { key: "X-Frame-Options", value: "DENY" },
+        ],
       },
-    ],
+    ];
   },
-}
+};
 
-export default nextConfig
+export default nextConfig;

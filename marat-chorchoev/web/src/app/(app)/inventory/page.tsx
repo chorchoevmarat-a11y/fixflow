@@ -1,398 +1,184 @@
-'use client'
+"use client";
 
-import React, { useState, useEffect } from 'react'
-import { Plus, Package, AlertTriangle, ArrowDownUp, Search } from 'lucide-react'
-import { inventoryApi } from '@/lib/api'
-import type { InventoryItem, InventoryTransactionType } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
-import { formatCurrency } from '@/lib/utils'
+import { useState } from "react";
+import { AuthGuard } from "@/components/auth-guard";
+import { Button, Card, Empty, ErrorNote, Modal, Notice, PageHeader, Pagination, Spinner, TextField } from "@/components/ui";
+import { api, ApiError } from "@/lib/api";
+import { fmtMoney, parseMoney } from "@/lib/format";
+import { useAction, useApiQuery } from "@/lib/hooks";
+import { isStaff, useMembership } from "@/lib/session";
+import type { InventoryItem, Page } from "@/lib/types";
+
+function ItemForm({ onDone }: { onDone: () => void }) {
+  const [f, setF] = useState({ code: "", name: "", unit: "pcs", stock: "0", threshold: "0", price: "0.00" });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const create = useAction(
+    () =>
+      api.post("/inventory", {
+        code: f.code.trim(),
+        name: f.name.trim(),
+        unit: f.unit.trim(),
+        stock_quantity: Number(f.stock),
+        reorder_threshold: Number(f.threshold),
+        unit_price_minor: parseMoney(f.price),
+      }),
+    { success: "Item created.", onSuccess: onDone, silentError: true },
+  );
+  const server = create.error instanceof ApiError ? create.error.fields : {};
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  return (
+    <form
+      className="stack"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const found: Record<string, string> = {};
+        if (!/^[A-Za-z0-9._/-]{2,60}$/.test(f.code.trim())) found.code = "Code: 2–60 letters, digits, . _ / -";
+        if (f.name.trim().length < 2) found.name = "Name is required.";
+        if (!f.unit.trim()) found.unit = "Unit is required.";
+        if (!Number.isInteger(Number(f.stock)) || Number(f.stock) < 0) found.stock = "Whole number, zero or more.";
+        if (!Number.isInteger(Number(f.threshold)) || Number(f.threshold) < 0) found.threshold = "Whole number, zero or more.";
+        if (parseMoney(f.price) === null) found.price = "Enter an amount like 125.50.";
+        setErrors(found);
+        if (!Object.keys(found).length && !create.isPending) create.mutate(undefined);
+      }}
+    >
+      <TextField label="Item code" value={f.code} onChange={(e) => set("code", e.target.value)} error={errors.code ?? server.code} />
+      <TextField label="Name" value={f.name} onChange={(e) => set("name", e.target.value)} error={errors.name ?? server.name} />
+      <div className="grid cols-2">
+        <TextField label="Unit" value={f.unit} onChange={(e) => set("unit", e.target.value)} error={errors.unit} />
+        <TextField label="Unit price (KGS)" value={f.price} onChange={(e) => set("price", e.target.value)} error={errors.price} />
+        <TextField label="Opening stock" type="number" min={0} value={f.stock} onChange={(e) => set("stock", e.target.value)} error={errors.stock} />
+        <TextField label="Reorder threshold" type="number" min={0} value={f.threshold} onChange={(e) => set("threshold", e.target.value)} error={errors.threshold} />
+      </div>
+      {create.error && !Object.keys(server).length ? <ErrorNote error={create.error} /> : null}
+      <div className="row end">
+        <Button variant="secondary" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={create.isPending}>
+          Create item
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function StockForm({ item, onDone }: { item: InventoryItem; onDone: () => void }) {
+  const [qty, setQty] = useState("1");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const add = useAction(() => api.post(`/inventory/${item.id}/stock-additions`, { quantity: Number(qty), reason: reason.trim() }), {
+    success: "Stock added.",
+    onSuccess: onDone,
+  });
+  return (
+    <form
+      className="stack"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!Number.isInteger(Number(qty)) || Number(qty) < 1) return setError("Enter a whole number of 1 or more.");
+        if (reason.trim().length < 3) return setError("Give a reason (3+ characters).");
+        setError(null);
+        if (!add.isPending) add.mutate(undefined);
+      }}
+    >
+      <p>
+        {item.code} — {item.name}: {item.stock_quantity} {item.unit} in stock
+      </p>
+      <TextField label="Quantity to add" type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
+      <TextField label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} error={error} />
+      <div className="row end">
+        <Button variant="secondary" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={add.isPending}>
+          Add stock
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function InventoryView() {
+  const membership = useMembership();
+  const admin = membership?.role === "ADMIN";
+  const staff = isStaff(membership?.role);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState("");
+  const [low, setLow] = useState(false);
+  const [modal, setModal] = useState<"create" | InventoryItem | null>(null);
+  const items = useApiQuery<Page<InventoryItem>>("/inventory", { page, page_size: 15, q, low_stock: low || undefined });
+  const lowCount = useApiQuery<Page<InventoryItem>>(staff ? "/inventory" : null, { low_stock: true, page_size: 1 });
+  return (
+    <>
+      <PageHeader title="Inventory" actions={admin ? <Button onClick={() => setModal("create")}>Add item</Button> : undefined} />
+      {lowCount.data?.total ? <Notice kind="warn">{lowCount.data.total} item(s) are at or below their reorder threshold.</Notice> : null}
+      <Card>
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <TextField label="Search" type="search" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+          </div>
+          {staff ? (
+            <label className="check" style={{ marginTop: "1.4rem" }}>
+              <input type="checkbox" checked={low} onChange={(e) => { setLow(e.target.checked); setPage(1); }} />
+              Low stock only
+            </label>
+          ) : null}
+        </div>
+        {items.isLoading ? <Spinner /> : null}
+        <ErrorNote error={items.error} onRetry={() => void items.refetch()} />
+        {items.data?.items.length === 0 ? <Empty title="No items" /> : null}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Item</th>
+                <th>In stock</th>
+                {staff ? <th>Reorder at</th> : null}
+                {staff ? <th>Unit price</th> : null}
+                {admin ? <th /> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {items.data?.items.map((i) => (
+                <tr key={i.id}>
+                  <td>{i.code}</td>
+                  <td>{i.name}</td>
+                  <td>
+                    {i.stock_quantity} {i.unit}{" "}
+                    {i.is_low_stock ? <span className="badge sla-AT_RISK">⚠ Low stock</span> : null}
+                  </td>
+                  {staff ? <td>{i.reorder_threshold}</td> : null}
+                  {staff ? <td>{fmtMoney(i.unit_price_minor ?? 0)}</td> : null}
+                  {admin ? (
+                    <td>
+                      <Button small variant="secondary" onClick={() => setModal(i)}>
+                        Add stock
+                      </Button>
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {items.data ? <Pagination page={items.data.page} totalPages={items.data.total_pages} total={items.data.total} onChange={setPage} /> : null}
+      </Card>
+      <Modal title="Add inventory item" open={modal === "create"} onClose={() => setModal(null)}>
+        <ItemForm onDone={() => setModal(null)} />
+      </Modal>
+      <Modal title="Add stock" open={typeof modal === "object" && modal !== null} onClose={() => setModal(null)}>
+        {typeof modal === "object" && modal ? <StockForm item={modal} onDone={() => setModal(null)} /> : null}
+      </Modal>
+    </>
+  );
+}
 
 export default function InventoryPage() {
-  const [items, setItems] = useState<InventoryItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const [transactDialogOpen, setTransactDialogOpen] = useState(false)
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
-
-  // New item form
-  const [sku, setSku] = useState('')
-  const [name, setName] = useState('')
-  const [unit, setUnit] = useState('pcs')
-  const [quantity, setQuantity] = useState(0)
-  const [reorderPoint, setReorderPoint] = useState(5)
-  const [costKgs, setCostKgs] = useState(0)
-
-  // Transaction form
-  const [transType, setTransType] = useState<InventoryTransactionType>('in')
-  const [transQuantity, setTransQuantity] = useState(1)
-  const [transNote, setTransNote] = useState('')
-
-  const loadInventory = async () => {
-    try {
-      const data = await inventoryApi.list()
-      if (data && Array.isArray(data.items)) {
-        setItems(data.items)
-      } else if (Array.isArray(data)) {
-        setItems(data)
-      }
-    } catch {
-      // sample data
-      setItems([
-        {
-          id: 'inv-1',
-          organization_id: 'org1',
-          sku: 'HVAC-FLT-2020',
-          name: 'Air Filter 20x20x1 Merv 8',
-          unit: 'pcs',
-          quantity_on_hand: 24,
-          quantity_reserved: 4,
-          reorder_point: 10,
-          unit_cost_tyiyn: 35000,
-          location: 'Warehouse Shelf A-2',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'inv-2',
-          organization_id: 'org1',
-          sku: 'PLB-VALV-050',
-          name: '1/2" Brass Ball Valve',
-          unit: 'pcs',
-          quantity_on_hand: 3,
-          quantity_reserved: 1,
-          reorder_point: 5,
-          unit_cost_tyiyn: 48000,
-          location: 'Warehouse Shelf B-1',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadInventory()
-  }, [])
-
-  const handleAddItem = async (e: React.FormEvent) => {
-    e.preventDefault()
-    try {
-      const created = await inventoryApi.create({
-        sku,
-        name,
-        unit,
-        quantity_on_hand: quantity,
-        reorder_point: reorderPoint,
-        unit_cost_tyiyn: Math.round(costKgs * 100),
-      })
-      setItems((prev) => [...prev, created])
-      setAddDialogOpen(false)
-      setSku('')
-      setName('')
-      setCostKgs(0)
-    } catch {
-      alert('Failed to add item')
-    }
-  }
-
-  const handleTransact = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedItem) return
-
-    try {
-      await inventoryApi.transact(selectedItem.id, {
-        type: transType,
-        quantity: transQuantity,
-        note: transNote,
-      })
-      setTransactDialogOpen(false)
-      loadInventory()
-    } catch {
-      alert('Failed to record stock movement')
-    }
-  }
-
-  const filteredItems = items.filter(
-    (i) =>
-      i.name.toLowerCase().includes(search.toLowerCase()) ||
-      i.sku.toLowerCase().includes(search.toLowerCase())
-  )
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Spare Parts & Inventory</h1>
-          <p className="text-sm text-muted-foreground">
-            Track materials, stock consumption, and reorder levels
-          </p>
-        </div>
-
-        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-1.5">
-              <Plus className="w-4 h-4" />
-              Add Inventory Item
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Inventory Item</DialogTitle>
-              <DialogDescription>
-                Register a new replacement component or material
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleAddItem} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sku">SKU Code *</Label>
-                  <Input
-                    id="sku"
-                    placeholder="e.g. ELEC-BREAKER-16A"
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="unit">Unit of Measure</Label>
-                  <Input
-                    id="unit"
-                    placeholder="pcs, meters, kg"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="name">Item Name *</Label>
-                <Input
-                  id="name"
-                  placeholder="e.g. 16A Circuit Breaker Schneider"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="qty">Initial Qty</Label>
-                  <Input
-                    id="qty"
-                    type="number"
-                    value={quantity}
-                    onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="reorder">Reorder Point</Label>
-                  <Input
-                    id="reorder"
-                    type="number"
-                    value={reorderPoint}
-                    onChange={(e) => setReorderPoint(parseInt(e.target.value) || 0)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cost">Unit Cost (KGS)</Label>
-                  <Input
-                    id="cost"
-                    type="number"
-                    step="0.01"
-                    value={costKgs}
-                    onChange={(e) => setCostKgs(parseFloat(e.target.value) || 0)}
-                  />
-                </div>
-              </div>
-
-              <DialogFooter className="pt-4">
-                <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit">Save Item</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {/* Search */}
-      <div className="max-w-md">
-        <Input
-          placeholder="Search by SKU or item name..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
-
-      {/* Items Table */}
-      <div className="rounded-md border bg-background overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[140px]">SKU</TableHead>
-              <TableHead>Item Name</TableHead>
-              <TableHead className="w-[120px]">Location</TableHead>
-              <TableHead className="w-[100px] text-right">In Stock</TableHead>
-              <TableHead className="w-[120px] text-right">Unit Cost</TableHead>
-              <TableHead className="w-[120px]">Stock Status</TableHead>
-              <TableHead className="w-[120px] text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                  Loading inventory...
-                </TableCell>
-              </TableRow>
-            ) : filteredItems.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
-                  No inventory items found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredItems.map((item) => {
-                const isLow = item.quantity_on_hand <= item.reorder_point
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-xs font-semibold">
-                      {item.sku}
-                    </TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {item.location || '—'}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      {item.quantity_on_hand} {item.unit}
-                    </TableCell>
-                    <TableCell className="text-right text-xs">
-                      {formatCurrency(item.unit_cost_tyiyn)}
-                    </TableCell>
-                    <TableCell>
-                      {isLow ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400">
-                          <AlertTriangle className="w-3 h-3" />
-                          Low Stock
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400">
-                          Healthy
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setTransactDialogOpen(true)
-                        }}
-                      >
-                        Adjust Stock
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Adjust Stock Dialog */}
-      <Dialog open={transactDialogOpen} onOpenChange={setTransactDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adjust Stock: {selectedItem?.name}</DialogTitle>
-            <DialogDescription>
-              Record incoming shipment, technician consumption, or inventory recount
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleTransact} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Transaction Type</Label>
-              <Select
-                value={transType}
-                onValueChange={(val: InventoryTransactionType) => setTransType(val)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="in">Restock (+ Inbound)</SelectItem>
-                  <SelectItem value="out">Usage / Consumption (- Outbound)</SelectItem>
-                  <SelectItem value="adjustment">Count Adjustment</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="trans-qty">Quantity ({selectedItem?.unit})</Label>
-              <Input
-                id="trans-qty"
-                type="number"
-                min="1"
-                value={transQuantity}
-                onChange={(e) => setTransQuantity(parseInt(e.target.value) || 1)}
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="trans-note">Note / Reference</Label>
-              <Input
-                id="trans-note"
-                placeholder="e.g. Used for REQ-1001 or PO #4910"
-                value={transNote}
-                onChange={(e) => setTransNote(e.target.value)}
-              />
-            </div>
-
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setTransactDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">Confirm Adjustment</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
+    <AuthGuard roles={["ADMIN", "DISPATCHER", "TECHNICIAN"]}>
+      <InventoryView />
+    </AuthGuard>
+  );
 }

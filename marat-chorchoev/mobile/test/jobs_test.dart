@@ -1,99 +1,52 @@
+import 'package:fixflow_mobile/core/models.dart';
+import 'package:fixflow_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fixflow_mobile/features/jobs/jobs_repository.dart';
-import 'package:fixflow_mobile/features/jobs/jobs_notifier.dart';
-import 'package:fixflow_mobile/shared/widgets/sla_indicator.dart';
+
+import 'support.dart';
 
 void main() {
-  group('JobModel & JobsState Tests', () {
-    test('JobModel.fromJson correctly parses fields', () {
-      final json = {
-        'id': 'job-123',
-        'title': 'HVAC Repair',
-        'description': 'Check rooftop unit',
-        'status': 'in_progress',
-        'priority': 'high',
-        'customer_id': 'cust-1',
-        'customer_name': 'Acme Corp',
-        'location_address': '123 Main St',
-        'assigned_technician_id': 'tech-9',
-        'sla_deadline': '2026-12-01T12:00:00Z',
-      };
+  testWidgets(
+      'assignment inbox card shows appointment, address, asset, status, priority and SLA',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: JobCard(job: Job(jobJson())))),
+    );
 
-      final job = JobModel.fromJson(json);
-
-      expect(job.id, 'job-123');
-      expect(job.title, 'HVAC Repair');
-      expect(job.status, 'in_progress');
-      expect(job.priority, 'high');
-      expect(job.customerName, 'Acme Corp');
-      expect(job.slaDeadline, isNotNull);
-    });
-
-    test('JobsState filters jobs correctly by status', () {
-      final jobs = [
-        JobModel(
-          id: '1',
-          title: 'Job 1',
-          description: '',
-          status: 'assigned',
-          priority: 'medium',
-          customerId: 'c1',
-          customerName: 'Customer A',
-          locationAddress: 'Addr 1',
-          assignedTechnicianId: 't1',
-        ),
-        JobModel(
-          id: '2',
-          title: 'Job 2',
-          description: '',
-          status: 'in_progress',
-          priority: 'high',
-          customerId: 'c2',
-          customerName: 'Customer B',
-          locationAddress: 'Addr 2',
-          assignedTechnicianId: 't1',
-        ),
-      ];
-
-      final stateAll = JobsState(jobs: jobs, filterStatus: 'all');
-      expect(stateAll.filteredJobs.length, 2);
-
-      final stateInProgress = JobsState(jobs: jobs, filterStatus: 'in_progress');
-      expect(stateInProgress.filteredJobs.length, 1);
-      expect(stateInProgress.filteredJobs.first.id, '2');
-    });
+    expect(find.textContaining('REQ-00042'), findsOneWidget);
+    expect(find.textContaining('Air handler is noisy'), findsOneWidget);
+    expect(find.textContaining('Manas Business Tower'), findsOneWidget);
+    expect(find.textContaining('AHU-001'), findsOneWidget);
+    expect(find.text('Scheduled'), findsOneWidget);
+    expect(find.text('High priority'), findsOneWidget);
+    // Status is text, not only color.
+    expect(find.text('SLA at risk'), findsOneWidget);
+    expect(find.byIcon(Icons.schedule), findsOneWidget);
   });
 
-  group('SlaIndicator Widget Tests', () {
-    testWidgets('Displays SLA Met when completed is true', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SlaIndicator(
-              slaDeadline: DateTime.now().subtract(const Duration(hours: 1)),
-              isCompleted: true,
-            ),
+  test('job exposes the server-allowed actions that drive the buttons', () {
+    final job = Job(jobJson(actions: ['accept', 'decline']));
+    expect(job.can('accept'), isTrue);
+    expect(job.can('start'), isFalse);
+    expect(job.assignmentId, 'asg-1');
+    expect(job.estimatedMinutes, 120);
+  });
+
+  testWidgets('state message explains an offline error with a retry action',
+      (tester) async {
+    var retried = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StateMessage.forError(
+            const ApiException(0, 'NETWORK_ERROR', 'Cannot reach the server.'),
+            onRetry: () => retried = true,
           ),
         ),
-      );
-
-      expect(find.text('SLA Met'), findsOneWidget);
-    });
-
-    testWidgets('Displays SLA Breached when deadline is past', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SlaIndicator(
-              slaDeadline: DateTime.now().subtract(const Duration(hours: 2)),
-              isCompleted: false,
-            ),
-          ),
-        ),
-      );
-
-      expect(find.text('SLA Breached'), findsOneWidget);
-    });
+      ),
+    );
+    expect(find.text('You are offline'), findsOneWidget);
+    await tester.tap(find.text('Try again'));
+    expect(retried, isTrue);
   });
 }

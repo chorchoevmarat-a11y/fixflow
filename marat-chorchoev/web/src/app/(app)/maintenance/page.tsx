@@ -1,297 +1,178 @@
-'use client'
+"use client";
 
-import React, { useState, useEffect } from 'react'
-import { Plus, Wrench, Calendar, Clock, AlertCircle } from 'lucide-react'
-import { maintenanceApi, propertiesApi, categoriesApi } from '@/lib/api'
-import type { MaintenancePlan, Property, Category, RequestPriority } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
-import { formatDate } from '@/lib/utils'
+import Link from "next/link";
+import { useState } from "react";
+import { AuthGuard } from "@/components/auth-guard";
+import { Button, Card, Empty, ErrorNote, Modal, Notice, PageHeader, Pagination, SelectField, Spinner, TextArea, TextField } from "@/components/ui";
+import { api, ApiError } from "@/lib/api";
+import { localDate } from "@/lib/format";
+import { useAction, useApiQuery } from "@/lib/hooks";
+import { useMembership } from "@/lib/session";
+import type { AssetItem, Category, Page } from "@/lib/types";
+
+interface Plan {
+  id: string;
+  title: string;
+  description: string;
+  priority: string;
+  first_date: string;
+  recurrence: "WEEKLY" | "MONTHLY";
+  is_enabled: boolean;
+  asset: { id: string; code: string; name: string; status: string };
+  category: { id: string; name: string };
+  next_occurrence: string | null;
+  generated_count: number;
+}
+interface PlanDetail extends Plan {
+  generated: { request_id: string; reference: string; occurrence_date: string; status: string }[];
+}
+
+function PlanForm({ onDone }: { onDone: () => void }) {
+  const tz = useMembership()?.timezone ?? "UTC";
+  const assets = useApiQuery<Page<AssetItem>>("/assets", { status: "ACTIVE", page_size: 100 });
+  const categories = useApiQuery<Category[]>("/categories", { enabled_only: true });
+  const [f, setF] = useState({ asset_id: "", category_id: "", title: "", description: "", priority: "NORMAL", first_date: localDate(new Date(), tz), recurrence: "MONTHLY" });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
+  const create = useAction(() => api.post("/maintenance-plans", { ...f, title: f.title.trim(), description: f.description.trim() }), {
+    success: "Plan created.",
+    onSuccess: onDone,
+    silentError: true,
+  });
+  const server = create.error instanceof ApiError ? create.error.fields : {};
+  return (
+    <form
+      className="stack"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const found: Record<string, string> = {};
+        if (!f.asset_id) found.asset_id = "Choose an asset.";
+        if (!f.category_id) found.category_id = "Choose a category.";
+        if (f.title.trim().length < 5) found.title = "Title needs 5+ characters.";
+        if (f.description.trim().length < 20) found.description = "Describe the work in 20+ characters.";
+        setErrors(found);
+        if (!Object.keys(found).length && !create.isPending) create.mutate(undefined);
+      }}
+    >
+      <SelectField label="Active asset" value={f.asset_id} onChange={(e) => set("asset_id", e.target.value)} error={errors.asset_id ?? server.asset_id}>
+        <option value="">Choose…</option>
+        {assets.data?.items.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.code} — {a.name}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField label="Category" value={f.category_id} onChange={(e) => set("category_id", e.target.value)} error={errors.category_id ?? server.category_id}>
+        <option value="">Choose…</option>
+        {categories.data?.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </SelectField>
+      <TextField label="Title" value={f.title} onChange={(e) => set("title", e.target.value)} error={errors.title ?? server.title} />
+      <TextArea label="Description" value={f.description} onChange={(e) => set("description", e.target.value)} error={errors.description ?? server.description} rows={3} />
+      <div className="grid cols-3">
+        <SelectField label="Priority" value={f.priority} onChange={(e) => set("priority", e.target.value)}>
+          <option value="LOW">Low</option>
+          <option value="NORMAL">Normal</option>
+          <option value="HIGH">High</option>
+        </SelectField>
+        <SelectField label="Repeats" value={f.recurrence} onChange={(e) => set("recurrence", e.target.value)}>
+          <option value="WEEKLY">Weekly</option>
+          <option value="MONTHLY">Monthly</option>
+        </SelectField>
+        <TextField label="First date" type="date" value={f.first_date} onChange={(e) => set("first_date", e.target.value)} />
+      </div>
+      {create.error && !Object.keys(server).length ? <ErrorNote error={create.error} /> : null}
+      <div className="row end">
+        <Button variant="secondary" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={create.isPending}>
+          Create plan
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function PlanHistory({ id }: { id: string }) {
+  const detail = useApiQuery<PlanDetail>(`/maintenance-plans/${id}`);
+  if (detail.isLoading) return <Spinner />;
+  return (
+    <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+      {detail.data?.generated.length === 0 ? <li className="muted">No requests generated yet.</li> : null}
+      {detail.data?.generated.map((g) => (
+        <li key={g.request_id}>
+          {g.occurrence_date}: <Link href={`/requests/${g.request_id}`}>{g.reference}</Link> ({g.status.replace("_", " ").toLowerCase()})
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MaintenanceView() {
+  const tz = useMembership()?.timezone ?? "UTC";
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [asOf, setAsOf] = useState(localDate(new Date(), tz));
+  const [result, setResult] = useState<string | null>(null);
+  const plans = useApiQuery<Page<Plan>>("/maintenance-plans", { page, page_size: 10 });
+  const toggle = useAction((p: Plan) => api.patch(`/maintenance-plans/${p.id}`, { is_enabled: !p.is_enabled }), { success: "Plan updated." });
+  const generate = useAction(() => api.post<{ generated_count: number }>("/maintenance-plans/generate", { as_of: asOf }), {
+    onSuccess: (r) => setResult(`${r.generated_count} request(s) generated up to ${asOf}.`),
+  });
+  return (
+    <>
+      <PageHeader title="Preventive maintenance" actions={<Button onClick={() => setOpen(true)}>New plan</Button>} />
+      <Card title="Generate due requests">
+        <div className="row">
+          <TextField label="As of date" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          <Button loading={generate.isPending} onClick={() => generate.mutate(undefined)} style={{ alignSelf: "end" }}>
+            Generate
+          </Button>
+        </div>
+        <p className="muted small">Safe to repeat: each plan/date pair creates at most one request, even with simultaneous runs. The same job is also available as <code>python -m app.cli generate-maintenance</code>.</p>
+        {result ? <Notice kind="success">{result}</Notice> : null}
+      </Card>
+      <div style={{ marginTop: "1rem" }}>
+        {plans.isLoading ? <Spinner /> : null}
+        <ErrorNote error={plans.error} onRetry={() => void plans.refetch()} />
+        {plans.data?.items.length === 0 ? <Empty title="No plans yet" /> : null}
+        {plans.data?.items.map((p) => (
+          <Card key={p.id} title={p.title} actions={<span className="badge">{p.is_enabled ? "Enabled" : "Disabled"}</span>}>
+            <p className="muted">
+              {p.asset.code} · {p.asset.name} ({p.asset.status.replace("_", " ").toLowerCase()}) · {p.category.name} · {p.recurrence.toLowerCase()} from {p.first_date} · {p.priority.toLowerCase()}
+            </p>
+            <p>
+              <strong>Next occurrence:</strong> {p.next_occurrence ?? "none (disabled or asset not active)"} · {p.generated_count} generated
+            </p>
+            <div className="row">
+              <Button small variant="secondary" loading={toggle.isPending} onClick={() => toggle.mutate(p)}>
+                {p.is_enabled ? "Disable" : "Enable"}
+              </Button>
+              <Button small variant="ghost" onClick={() => setExpanded(expanded === p.id ? null : p.id)}>
+                {expanded === p.id ? "Hide history" : "Generated history"}
+              </Button>
+            </div>
+            {expanded === p.id ? <PlanHistory id={p.id} /> : null}
+          </Card>
+        ))}
+        {plans.data ? <Pagination page={plans.data.page} totalPages={plans.data.total_pages} total={plans.data.total} onChange={setPage} /> : null}
+      </div>
+      <Modal title="New maintenance plan" open={open} onClose={() => setOpen(false)}>
+        <PlanForm onDone={() => setOpen(false)} />
+      </Modal>
+    </>
+  );
+}
 
 export default function MaintenancePage() {
-  const [plans, setPlans] = useState<MaintenancePlan[]>([])
-  const [properties, setProperties] = useState<Property[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-
-  // Form
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [propertyId, setPropertyId] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [recurrenceRule, setRecurrenceRule] = useState('FREQ=MONTHLY')
-  const [nextDueDate, setNextDueDate] = useState('')
-  const [priority, setPriority] = useState<RequestPriority>('medium')
-  const [submitting, setSubmitting] = useState(false)
-
-  const loadData = async () => {
-    try {
-      const [pData, propsData, catsData] = await Promise.allSettled([
-        maintenanceApi.list(),
-        propertiesApi.list(),
-        categoriesApi.list(),
-      ])
-      if (pData.status === 'fulfilled') setPlans(pData.value)
-      if (propsData.status === 'fulfilled') setProperties(propsData.value)
-      if (catsData.status === 'fulfilled') setCategories(catsData.value)
-    } catch {
-      // fallback sample
-      setPlans([
-        {
-          id: 'plan-1',
-          organization_id: 'org1',
-          name: 'Quarterly HVAC Comprehensive Inspection',
-          description: 'Filter replacements, refrigerant check, coil wash',
-          status: 'active',
-          recurrence_rule: 'FREQ=MONTHLY;INTERVAL=3',
-          next_due_date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 14).toISOString(),
-          priority: 'medium',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'plan-2',
-          organization_id: 'org1',
-          name: 'Monthly Fire Alarm & Sprinkler Testing',
-          description: 'Test all pull stations, check pressure gauges',
-          status: 'active',
-          recurrence_rule: 'FREQ=MONTHLY',
-          next_due_date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 5).toISOString(),
-          priority: 'high',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true)
-    try {
-      const created = await maintenanceApi.create({
-        name,
-        description,
-        property_id: propertyId || undefined,
-        category_id: categoryId || undefined,
-        recurrence_rule: recurrenceRule,
-        next_due_date: nextDueDate ? new Date(nextDueDate).toISOString() : new Date().toISOString(),
-        priority,
-      })
-      setPlans((prev) => [...prev, created])
-      setDialogOpen(false)
-      setName('')
-      setDescription('')
-    } catch {
-      alert('Failed to create maintenance plan')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Preventive Maintenance Plans</h1>
-          <p className="text-sm text-muted-foreground">
-            Automated recurring service schedules to avoid equipment breakdowns
-          </p>
-        </div>
-
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-1.5">
-              <Plus className="w-4 h-4" />
-              New Maintenance Plan
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Maintenance Plan</DialogTitle>
-              <DialogDescription>
-                Schedule recurring preventive service work
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="plan-name">Plan Title *</Label>
-                <Input
-                  id="plan-name"
-                  placeholder="e.g. Monthly Elevator Safety Check"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="plan-desc">Description</Label>
-                <textarea
-                  id="plan-desc"
-                  rows={2}
-                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  placeholder="Instructions for preventive routine..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Recurrence Frequency</Label>
-                  <Select
-                    value={recurrenceRule}
-                    onValueChange={(val) => setRecurrenceRule(val)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FREQ=WEEKLY">Weekly</SelectItem>
-                      <SelectItem value="FREQ=MONTHLY">Monthly</SelectItem>
-                      <SelectItem value="FREQ=MONTHLY;INTERVAL=3">Quarterly</SelectItem>
-                      <SelectItem value="FREQ=YEARLY">Annual</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="due">First Due Date</Label>
-                  <Input
-                    id="due"
-                    type="date"
-                    value={nextDueDate}
-                    onChange={(e) => setNextDueDate(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Target Property</Label>
-                  <Select value={propertyId} onValueChange={setPropertyId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All / None" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {properties.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Default Priority</Label>
-                  <Select
-                    value={priority}
-                    onValueChange={(val: RequestPriority) => setPriority(val)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <DialogFooter className="pt-4">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={submitting}>
-                  {submitting ? 'Creating...' : 'Create Plan'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="h-40 rounded-lg bg-muted animate-pulse" />
-          <div className="h-40 rounded-lg bg-muted animate-pulse" />
-        </div>
-      ) : plans.length === 0 ? (
-        <div className="text-center py-12 border rounded-lg bg-card">
-          <Wrench className="mx-auto h-12 w-12 text-muted-foreground/60 mb-2" />
-          <h3 className="text-base font-semibold">No maintenance plans defined</h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            Create recurring schedules to automatically trigger maintenance work orders.
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {plans.map((plan) => (
-            <Card key={plan.id} className="hover:border-primary/50 transition-colors">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <CardTitle className="text-base font-semibold">{plan.name}</CardTitle>
-                  <Badge variant="outline" className="capitalize text-xs">
-                    {plan.status}
-                  </Badge>
-                </div>
-                {plan.description && (
-                  <CardDescription className="text-xs line-clamp-2">
-                    {plan.description}
-                  </CardDescription>
-                )}
-              </CardHeader>
-              <CardContent className="space-y-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-primary" />
-                  <span>Cadence: {plan.recurrence_rule.replace('FREQ=', '')}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Next Due: {formatDate(plan.next_due_date)}</span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+    <AuthGuard roles={["ADMIN", "DISPATCHER"]}>
+      <MaintenanceView />
+    </AuthGuard>
+  );
 }
