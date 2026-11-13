@@ -226,9 +226,16 @@ class SessionNotifier extends Notifier<SessionState> {
   }
 
   Future<void> signOut() async {
-    final api = ref.read(apiProvider);
+    // Built here instead of `ref.read(apiProvider)`: apiProvider depends on this notifier,
+    // so reading it from inside the notifier is a circular dependency. Riverpod throws
+    // CircularDependencyError and the Sign out button silently did nothing.
+    final token = state.token;
+    final orgId = state.orgId;
+    final api = HttpFixflowApi(
+        baseUrl: state.serverUrl, token: () => token, orgId: () => orgId);
     try {
-      await api.logout();
+      // Best effort and bounded: an unreachable server must not hold up signing out.
+      await api.logout().timeout(const Duration(seconds: 5));
     } catch (_) {
       // Offline sign-out still clears the device; the server session simply expires.
     }
