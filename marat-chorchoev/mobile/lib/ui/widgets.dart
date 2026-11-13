@@ -109,7 +109,12 @@ class StatusBanner extends ConsumerWidget {
               Icon(online ? Icons.sync : Icons.cloud_off, size: 18),
               const SizedBox(width: 8),
               Expanded(child: Text(parts.join(' · '))),
-              if (online && queue.pending > 0 && !queue.syncing)
+              if (!online)
+                // A successful refresh flips the app back online, which also sends the queue.
+                TextButton(
+                    onPressed: () => ref.read(jobsProvider.notifier).refresh(),
+                    child: const Text('Retry'))
+              else if (queue.pending > 0 && !queue.syncing)
                 TextButton(
                     onPressed: () => ref.read(queueProvider.notifier).syncNow(),
                     child: const Text('Sync now')),

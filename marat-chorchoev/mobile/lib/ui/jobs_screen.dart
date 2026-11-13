@@ -28,7 +28,6 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
   Widget build(BuildContext context) {
     final jobs = ref.watch(jobsProvider);
     final queue = ref.watch(queueProvider);
-    final online = ref.watch(onlineProvider);
     final error = jobs.error;
 
     Widget body;
@@ -78,8 +77,9 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
-            onPressed:
-                online ? () => ref.read(jobsProvider.notifier).refresh() : null,
+            // Always usable: while "offline" it is the only way to find out the server is
+            // back (a server outage on working Wi-Fi never fires a connectivity event).
+            onPressed: () => ref.read(jobsProvider.notifier).refresh(),
           ),
         ],
       ),

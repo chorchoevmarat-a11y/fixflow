@@ -48,6 +48,7 @@ class _AvailabilityScreenState extends ConsumerState<AvailabilityScreen> {
       for (final j in ref.watch(jobsProvider).jobs)
         if (j.startAt != null && j.assignment?['is_active'] == true) j
     ]..sort((a, b) => a.startAt!.compareTo(b.startAt!));
+    final now = DateTime.now();
     final profile = _profile;
     return Scaffold(
       appBar: AppBar(title: const Text('Availability')),
@@ -58,7 +59,7 @@ class _AvailabilityScreenState extends ConsumerState<AvailabilityScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Text('Upcoming appointments',
+                Text('Scheduled appointments',
                     style: Theme.of(context).textTheme.titleMedium),
                 if (jobs.isEmpty)
                   const Padding(
@@ -68,7 +69,9 @@ class _AvailabilityScreenState extends ConsumerState<AvailabilityScreen> {
                   ListTile(
                       contentPadding: EdgeInsets.zero,
                       title: Text(j.appointmentText),
-                      subtitle: Text('${j.reference} · ${j.title}')),
+                      // Still-open jobs whose slot has already passed are shown, but labelled as such.
+                      subtitle: Text('${j.reference} · ${j.title}'
+                          '${(j.endAt ?? j.startAt!).isBefore(now) ? ' · past due' : ''}')),
                 const Divider(),
                 Text('Weekly hours',
                     style: Theme.of(context).textTheme.titleMedium),
