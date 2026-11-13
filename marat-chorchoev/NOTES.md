@@ -3,6 +3,7 @@
 Working notes for the team: what the project is, what changed in the rebuild, and what is left.
 Source of truth for requirements: `FixFlow_Requirements_261112_170928.pdf` (v2.0). Submission deadline:
 **Sunday 15 Nov 2026, 18:00 Asia/Bishkek**; repository access opens 16:00.
+Last refreshed: **13 Nov 2026** (after the adversarial testing round described below).
 
 ## What the project is
 
@@ -57,32 +58,65 @@ the **Smart slot finder** (`GET /requests/{id}/suggestions`).
 job detail with online-only actions disabled offline, notes + photos through a persistent queue with stable
 command ids, conflict recovery (keep/retry/discard), materials, completion, availability, notifications.
 
-**Quality** — 45 backend tests (real PostgreSQL, concurrency races), 15 web tests, 15 mobile tests, lint/type
-checks everywhere, `verify-all.sh` passing end to end, smoke test against a 2-worker server.
+**Hardening round (13 Nov 2026)** — about 400 adversarial API probes (auth, validation, tenant isolation, roles,
+races, uploads, numeric and date limits), a browser pass over the web app, a code review of the mobile app and a
+sweep of it on a physical Android phone. Everything found was fixed and has a regression test:
+* *Backend:* NUL characters in text or query strings, year-9999 slots/report dates and estimate totals above the
+  BIGINT range returned 500 → now 422 (`SLOT_TOO_FAR`, `RANGE_INVALID`, `ESTIMATE_TOTAL_TOO_LARGE`); `%`/`_` in
+  search matched every row; inventory codes were case-sensitive; JSON responses lacked the `no-store`/`nosniff`
+  headers the docs promised; past preferred-visit windows are rejected; canceled requests leave the default
+  list after `CANCELED_HIDE_AFTER_MINUTES` (5).
+* *Web:* every modal rendered as a plain in-page box (no backdrop, no focus trap); `/schedule` had no role guard;
+  property access can be edited from the properties screen.
+* *Mobile:* a mistyped server address or odd server reply crashed sign-in; a non-API error left a note stuck in
+  "Sending…"; overlapping saves could collide on the state file; **Sign out did nothing** (circular provider
+  dependency); the app could not get back online after a server outage on working Wi-Fi (Refresh was disabled
+  while "offline"); "Upcoming appointments" listed past ones.
+* *Docker:* added `backend/.dockerignore` and `web/.dockerignore`; without them `COPY . .` would copy the host's
+  Windows `.venv` and `node_modules` into the images.
+
+**Quality** — 52 backend tests (real PostgreSQL, concurrency races), 16 web tests, 32 mobile tests, lint/type
+checks everywhere, production web build, smoke test against a 2-worker server. Numbers and commands:
+`docs/VERIFICATION.md`.
 
 ## What is left to do
 
 Must do before the deadline
-1. **Record and publish the ~5 minute YouTube demo**, then put the real URL at the top of `README.md`
-   (it currently holds a placeholder). The video must show web request creation, dispatcher assignment, the
-   Android app, a backend-driven update, a conflict or offline flow, the Smart slot finder, and a test run.
-2. **Run the Android APK on an emulator or phone** and walk through E2E-04/05 (offline note + photo, restart,
-   reconnect → exactly one note; reassignment while offline → conflict). Fix whatever this finds.
-3. **Run the Docker stack** on a machine with Docker: `SEED_ON_START=1 docker compose up --build -d`, check
-   `/api/v1/health/ready`, log in as each role, restart containers and confirm data/evidence survive (E2E-10).
+1. **Reset the demo data, then record and publish the ~5 minute YouTube demo**, and put the real URL at the top
+   of `README.md` (it currently holds a placeholder). Manual testing leaves clutter (canceled probe requests,
+   test notes, generated maintenance requests), so first run
+   `cd backend && uv run python -m app.cli reset-db --yes-destroy-local-data` (restart the API afterwards).
+   The video must show web request creation, dispatcher assignment, the Android app, a backend-driven update,
+   a conflict or offline flow, the Smart slot finder, and a test run.
+2. **Finish the on-device walk-through.** Done on a physical phone: sign-in/sign-out, jobs/inbox/availability/
+   profile, online note, offline note → app killed → reconnect → exactly one note, Retry after a server outage,
+   materials and completion validation, landscape. **Still to do:** camera/gallery photos and the offline photo
+   queue, Accept/Start/Decline/Block/Complete against a fresh seed, and reassignment while offline → conflict (E2E-05).
+3. **Run the Docker stack.** Docker 29.9.3 / Compose 5.7.0 are installed, but the daemon was not running when this
+   was checked (start Docker Desktop first). Compose publishes ports 5432, 8000 and 3000 — the same ports local
+   development uses, and PostgreSQL runs here as an always-on Windows service. Stop the local API and web dev
+   server, and put `DB_PORT=5433` in `.env` (or stop the PostgreSQL service); the other ports can be overridden with
+   `API_PORT`/`WEB_PORT` (then also set `CORS_ORIGINS` to the web address). Then `SEED_ON_START=1 docker compose up --build -d`,
+   check `/api/v1/health/ready`, log in as each role, restart containers and confirm data/evidence survive (E2E-10).
+   The images have still never been built; the web runtime was verified without Docker by running
+   `node server.js` from the standalone output exactly as the image does.
 4. **Submission mechanics:** accept the repo invitation (opens 16:00 Sunday), create folder `<name-surname>/`,
    branch `submission/<name-surname>`, copy the project in (no nested git repo), PR titled
    `FixFlow: Name Surname` with links to the README, video and what is/isn't implemented. Do not merge it.
    The project currently lives in `marat-chorchoev/`; confirm the folder name matches the required pattern.
 
 Should do if time allows
-* Mobile-width and keyboard-only pass on the web app; requester and admin screens were not manually checked.
+* Keyboard-only and screen-reader pass on the web app; the staff, maintenance-plan and organization-settings
+  screens were never opened in a browser.
 * A multi-process race test (several OS processes) for scheduling/inventory.
 * Dedicated cross-organization tests for assignments, estimates and material usage.
 * Add a Content-Security-Policy; consider moving the web session out of `sessionStorage`.
+* Decide whether `Idempotency-Key` should be required when creating a request (today it is optional, so a raw API
+  client that retries without one can create a duplicate; the web app always sends one).
+* Mobile: a completion photo retaken after a timeout can be stored twice; one permanently failing note
+  (server 5xx) pauses the whole queue behind it; background sync/notifications; editing availability.
 * Migrate Flutter from `package:flutter/material.dart` to `material_ui` (deprecation rule is switched off).
-* Mobile: background sync/notifications, editing availability.
-* Delete `mobile/tool/live_check.dart` or keep it documented as a manual check.
+* Delete `mobile/tool/live_check.dart` or keep it documented as a manual check (each run adds a note to a job).
 
 Full, honest lists live in `docs/KNOWN_LIMITATIONS.md` and `docs/VERIFICATION.md`.
 
@@ -95,10 +129,29 @@ cd backend && uv run python -m app.cli --help # migrate, seed, sla-check, genera
 cd mobile && dart run tool/live_check.dart http://localhost:8000   # real Dart client vs live API
 ```
 
+Run locally without Docker (three terminals; the database must already be running):
+
+```bash
+cd backend && uv run uvicorn app.main:app --port 8000     # API on 127.0.0.1 only
+cd web && bun run dev                                     # http://localhost:3000
+# phone over USB, no Wi-Fi/firewall setup (server address in the app: http://localhost:8000):
+adb reverse tcp:8000 tcp:8000
+adb install -r mobile/build/app/outputs/flutter-apk/app-debug.apk
+```
+
+Restart the API after pulling backend changes — it does not reload by itself, and a stale server was the cause of
+confusing "missing endpoint" and "old behaviour" reports before.
+
 Demo password for all seeded accounts: see `README.md` (disposable, demo-only).
 
 ## Local environment notes (this machine)
 
 * Flutter SDK cloned to `C:\Users\Azamama\flutter` (3.50.0); Android SDK/JDK from Android Studio.
-* No Docker and no system PostgreSQL; tests used a throwaway PostgreSQL 16.2 started from a Python package.
-  Provide your own with `TEST_DATABASE_URL` (database name must end in `_test`).
+  `flutter doctor` still reports the Android cmdline-tools/licences, Chrome and Visual Studio as missing; none of
+  them blocks `flutter build apk` or running on a USB phone (USB debugging must be allowed on the phone).
+* PostgreSQL 16 runs as the Windows service `postgresql-x64-16` (automatic start) on port 5432, with user
+  `fixflow` and the databases `fixflow` (the app) and `fixflow_test` (the tests; it is dropped and rebuilt by every
+  run). The original build used a throwaway PostgreSQL 16.2 instead. Provide your own with `TEST_DATABASE_URL`
+  (database name must end in `_test`).
+* Docker CLI and Compose are installed; Docker Desktop's engine was not running when checked (see item 3 above).
+* In Git Bash, `adb shell` arguments starting with `/` are rewritten to Windows paths; use `MSYS_NO_PATHCONV=1`.

@@ -20,10 +20,10 @@ Android app that all use the same live records.
 | Preventive maintenance with unique (plan, date) guard, CLI | Implemented, tested |
 | Notes, evidence images (validated, authorized download), notifications, activity timeline | Implemented, tested |
 | Live updates (Server-Sent Events over PostgreSQL LISTEN/NOTIFY) | Implemented; manually checked, one automated isolation check |
-| Web app (requester, dispatcher, admin workspaces, dashboard, charts, schedule board) | Implemented; 15 automated tests; spot-checked in a browser |
+| Web app (requester, dispatcher, admin workspaces, dashboard, charts, schedule board) | Implemented; 16 automated tests; browser-checked as dispatcher and requester (staff, maintenance and organization-settings screens not yet) |
 | **Original feature: Smart slot finder** (see `docs/PRODUCT_DECISIONS.md`) | Implemented, tested |
-| Android app: sign-in, jobs, detail, notes + photos offline queue, conflicts, materials, availability, inbox | Implemented; 15 automated tests; **APK not run on a device/emulator** |
-| Docker Compose stack | Written; **not executed in the authoring environment** (no Docker) |
+| Android app: sign-in, jobs, detail, notes + photos offline queue, conflicts, materials, availability, inbox | Implemented; 32 automated tests; **run on one physical phone** (sign-in/out, jobs, offline note queue); photo flows and job state changes **not yet walked through on a device** |
+| Docker Compose stack | Written; **never executed** (the Docker CLI is installed, its engine was not running; see `docs/KNOWN_LIMITATIONS.md`) |
 | Demo video | **Not done** |
 
 Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
@@ -32,9 +32,9 @@ Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATION
 
 | Tool | Version used | Needed for |
 | --- | --- | --- |
-| Docker + Compose v2 | _not available where this was written_ | one-command stack |
+| Docker + Compose v2 | CLI 29.9.3 / Compose 5.7.0 installed; the engine was **not running** when checked, so the stack was never executed | one-command stack |
 | [uv](https://docs.astral.sh/uv/) | 0.11.19 | Python env (Python ≥ 3.13; tested on 3.14.5) |
-| PostgreSQL | 16 (tests ran on 16.2) | database |
+| PostgreSQL | 16 (tests ran on 16.2, later the Windows service `postgresql-x64-16`) | database |
 | [Bun](https://bun.sh) | 1.4.4 | web install/scripts |
 | Node.js | 26.13 (any 22+ works for `next`) | Next.js runtime, smoke script |
 | Flutter | 3.50.0 stable (Dart 3.14) | Android app |
@@ -83,10 +83,13 @@ export DATABASE_URL=postgresql+asyncpg://fixflow:fixflow@localhost:5432/fixflow
 export UPLOAD_DIR=./uploads
 uv run python -m app.cli migrate          # alembic upgrade head
 uv run python -m app.cli seed             # deterministic demo data
-uv run uvicorn app.main:app --port 8000 --workers 4
+uv run uvicorn app.main:app --port 8000 --workers 4   # listens on 127.0.0.1 only (see the phone note below)
 # 3. Web (new terminal)
 cd web && bun install && bun run dev      # http://localhost:3000
 ```
+
+Restart the API after changing backend code (it does not reload by itself). To start from a clean demo state:
+`uv run python -m app.cli reset-db --yes-destroy-local-data`, then restart the API.
 
 Other operational commands (run from `backend/`; in Docker prefix with `docker compose exec backend uv run --no-sync`):
 
@@ -127,13 +130,20 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
 * **Emulator:** the default server address `http://10.0.2.2:8000` reaches the API on your computer.
-* **Physical phone:** put the phone and the computer on the same Wi-Fi, allow port 8000 through the
-  computer's firewall and type `http://<computer-LAN-IP>:8000` into the **Server address** field on the
-  sign-in screen. It is stored on the device, so nothing is baked into the APK. A build-time default can
-  be set with `--dart-define=API_BASE_URL=http://192.168.1.20:8000`.
+* **Physical phone, USB (simplest; this is how it was tested):** enable USB debugging, run
+  `adb reverse tcp:8000 tcp:8000` and type `http://localhost:8000` into the **Server address** field on the
+  sign-in screen. No Wi-Fi or firewall setup is needed. If `adb devices` says `unauthorized`, accept the prompt on
+  the phone. (In Git Bash prefix `adb shell` commands that contain a `/path` with `MSYS_NO_PATHCONV=1`.)
+* **Physical phone, Wi-Fi:** the API must listen on the network, so start it with `--host 0.0.0.0` (the quick
+  start above binds `127.0.0.1`, which a phone cannot reach), put the phone and the computer on the same Wi-Fi,
+  allow port 8000 through the computer's firewall and type `http://<computer-LAN-IP>:8000` into the **Server
+  address** field. The address is stored on the device, so nothing is baked into the APK. A build-time default
+  can be set with `--dart-define=API_BASE_URL=http://192.168.1.20:8000`.
 * Sign in as a technician (e.g. `tech1@alatoo.example.com`). Dispatchers and requesters use the web app.
 * Offline demo: open a job while online, turn on airplane mode, write a note and attach a photo
   (**Pending sync** appears), restart the app, turn the network back on — it is delivered exactly once.
+  If only the server was unreachable (Wi-Fi stayed on), no network event fires: tap **Retry** in the offline
+  banner (or pull to refresh) and the queue is sent.
 
 ## Tests and checks
 

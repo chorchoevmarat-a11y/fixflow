@@ -96,7 +96,7 @@ HTTP/1.1 409 Conflict
   "request_id": "…" }
 ```
 Other assignment outcomes: `422 TECHNICIAN_NOT_ELIGIBLE` (missing skills, outside availability, time off —
-`details.reasons[]`), `422 SLOT_IN_PAST | SLOT_TOO_SHORT`, `409 INVALID_TRANSITION` (request not `TRIAGED`).
+`details.reasons[]`), `422 SLOT_IN_PAST | SLOT_TOO_SHORT | SLOT_TOO_FAR` (more than two years ahead), `409 INVALID_TRANSITION` (request not `TRIAGED`).
 `GET /requests/{id}/candidates?start_at=…&end_at=…` lists every technician with eligibility, workload and
 conflict reasons; `GET /requests/{id}/suggestions` proposes the earliest bookable slots.
 
@@ -125,7 +125,7 @@ asks the person to decide.
 | Command | Mechanism |
 | --- | --- |
 | Work notes, material usage, evidence files | `client_command_id` in the body/form, unique per organization in PostgreSQL (`uq_work_note_command`, `uq_material_usage_command`, `uq_evidence_command`). A payload hash detects reuse with different content (`409 COMMAND_ID_REUSED`). |
-| Request creation, assignment, reschedule, estimate approve/reject, maintenance generation | `Idempotency-Key: <8–100 chars>` header. Key + payload hash are stored in `idempotency_keys` in the **same transaction** as the command; a replay returns the stored response (`Idempotency-Replayed: true`), a different payload under the same key returns `409 IDEMPOTENCY_KEY_REUSED`, and a failed command rolls its key back so it can be retried. |
+| Request creation, assignment, reschedule, estimate approve/reject, maintenance generation | `Idempotency-Key: <8–100 chars>` header, **optional on every one of these commands**: without it the command still runs, but a retry is not recognised and creates a second request / assignment (the web app always sends one). Key + payload hash are stored in `idempotency_keys` in the **same transaction** as the command; a replay returns the stored response (`Idempotency-Replayed: true`), a different payload under the same key returns `409 IDEMPOTENCY_KEY_REUSED`, and a failed command rolls its key back so it can be retried. |
 
 All of it lives in PostgreSQL, so it survives restarts and works across API workers.
 
@@ -136,6 +136,17 @@ All of it lives in PostgreSQL, so it survives restarts and works across API work
   (`{"version": 2}`), otherwise `409 ESTIMATE_VERSION_MISMATCH`; the second of two simultaneous decisions gets
   `409 ESTIMATE_ALREADY_DECIDED`.
 * **Inventory:** `POST /requests/{id}/materials` → `409 INSUFFICIENT_STOCK` (`details.available`), nothing is written.
+* **Text and numbers:** any string containing a NUL character (U+0000) — in a body field or a query parameter —
+  is rejected with `422 VALIDATION_ERROR` (PostgreSQL cannot store it). A preferred visit window that ends in the
+  past is `422 PREFERRED_INTERVAL_IN_PAST`. An estimate whose total exceeds 10 trillion minor units is
+  `422 ESTIMATE_TOTAL_TOO_LARGE`. Inventory item codes are unique ignoring case (`409 ITEM_CODE_EXISTS`).
+  Search parameters (`q`) match literally: `%` and `_` are not wildcards.
+* **Dates in reports:** `/reports/dashboard` and `/schedule` accept dates from 1970 to 2100 and ranges up to
+  one year (`422 RANGE_INVALID` / `RANGE_TOO_LARGE` otherwise).
+* **Request list:** requests canceled more than `CANCELED_HIDE_AFTER_MINUTES` (default 5) ago leave the default
+  list; they are not deleted and appear with `?status=CANCELED` or by id.
+* **Headers:** every API response carries `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff`
+  unless the endpoint sets its own (file downloads and the stream do).
 * **Files:** JPEG/PNG/WebP, ≤ 10 MiB, content verified, pixel bounds enforced. Downloads
   (`GET /files/{id}/content`) are authorized on every call (`Cache-Control: private, no-store`); there are no public URLs.
 * **Live updates:** `GET /stream` sends the same auth headers. Events carry ids only (`request.updated`,

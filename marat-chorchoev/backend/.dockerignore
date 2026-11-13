@@ -1,0 +1,16 @@
+# Keep the build context small and, above all, never copy host-built artifacts into the image:
+# a Windows/macOS .venv would overwrite the Linux virtualenv that `uv sync` creates.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local data and secrets never belong in an image (uploads live in a volume).
+uploads/
+.env
+.env.*
+!.env.example
+*.log
+.git/

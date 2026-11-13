@@ -12,9 +12,9 @@
 
 AI-written code was not trusted on sight. It was accepted only after:
 
-1. **Automated checks** — backend: `ruff check`, `ruff format --check`, `ty check`, 45 `pytest` tests against a
-   real PostgreSQL built from the Alembic migrations; web: ESLint, strict `tsc`, 15 Jest tests, `next build`;
-   mobile: `flutter analyze`, `dart format`, 15 `flutter test` tests. Results are in `docs/VERIFICATION.md`.
+1. **Automated checks** — backend: `ruff check`, `ruff format --check`, `ty check`, 52 `pytest` tests against a
+   real PostgreSQL built from the Alembic migrations; web: ESLint, strict `tsc`, 16 Jest tests, `next build`;
+   mobile: `flutter analyze`, `dart format`, 32 `flutter test` tests. Results are in `docs/VERIFICATION.md`.
 2. **Concurrency tests that can fail** — races (assignment, inventory, estimate decisions, duplicate commands,
    maintenance generation, escalation) are asserted with `asyncio.gather` against PostgreSQL, so a missing lock or
    constraint produces a red test rather than a hidden bug.
@@ -22,7 +22,12 @@ AI-written code was not trusted on sight. It was accepted only after:
    against a 2-worker server; the web app was driven in a browser against that server. Problems found this way
    (for example a stale server missing a new endpoint, and a dashboard query that needs a timezone database)
    were fixed.
-4. **Review against the specification** — requirement identifiers (e.g. SCHED-03, INV-05) were mapped to code and
+4. **A second, adversarial round (13 Nov 2026)** — AI-driven probing of the running system (about 400 API
+   requests, a browser pass, and a sweep of the Android app on a physical phone) found further defects that the
+   first round's tests had missed, for example the mobile **Sign out** button doing nothing because of a circular
+   provider dependency. They were fixed with regression tests where practical; the account is in
+   `docs/VERIFICATION.md`, and what that round could not cover is in `docs/KNOWN_LIMITATIONS.md`.
+5. **Review against the specification** — requirement identifiers (e.g. SCHED-03, INV-05) were mapped to code and
    tests; items that could not be proven are listed in `docs/KNOWN_LIMITATIONS.md` rather than claimed.
 
 Known weak spots of AI-generated work to keep in mind when reviewing: UI copy, CSS details, and anything that
