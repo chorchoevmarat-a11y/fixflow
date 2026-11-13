@@ -7,6 +7,7 @@ import 'ui/jobs_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/notifications_screen.dart';
 import 'ui/profile_screen.dart';
+import 'ui/theme.dart';
 
 class FixflowApp extends ConsumerWidget {
   const FixflowApp({super.key});
@@ -17,12 +18,10 @@ class FixflowApp extends ConsumerWidget {
     return MaterialApp(
       title: 'FixFlow',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF1F5FD1), useMaterial3: true),
-      darkTheme: ThemeData(
-          colorSchemeSeed: const Color(0xFF1F5FD1),
-          useMaterial3: true,
-          brightness: Brightness.dark),
+      // One dark, app-style theme shared with the web app (see ui/theme.dart).
+      theme: buildAppTheme(),
+      darkTheme: buildAppTheme(),
+      themeMode: ThemeMode.dark,
       home: signedIn ? const HomeShell() : const LoginScreen(),
     );
   }

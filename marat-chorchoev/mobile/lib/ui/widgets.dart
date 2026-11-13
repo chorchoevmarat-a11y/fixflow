@@ -144,7 +144,7 @@ class Chip2 extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         border: Border.all(color: color ?? scheme.outline),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(label,
           style: TextStyle(fontSize: 12, color: color ?? scheme.onSurface)),
@@ -169,7 +169,7 @@ class JobCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final slaColor = switch (job.slaState) {
       'OVERDUE' => scheme.error,
-      'AT_RISK' => Colors.orange.shade800,
+      'AT_RISK' => const Color(0xFFE5B445),
       _ => null,
     };
     final slaLabel = switch (job.slaState) {
