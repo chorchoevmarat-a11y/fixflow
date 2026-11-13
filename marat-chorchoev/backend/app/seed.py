@@ -63,29 +63,30 @@ def sid(key: str) -> uuid.UUID:
 # ---------------------------------------------------------------------------
 
 ORGS = {
-    "a": ("Ala-Too Facility Services", "ala-too"),
-    "b": ("Issyk-Kul Property Care", "issyk-kul"),
+    "a": ("Salymbekov University Facilities", "salymbekov"),
+    "b": ("Salymbekov University Hospital", "salymbekov-hospital"),
 }
 
 # email, full name, [(org, role)]
 USERS: list[tuple[str, str, list[tuple[str, Role]]]] = [
-    ("admin@alatoo.example.com", "Aigul Asanova", [("a", Role.ADMIN)]),
-    ("dispatcher@alatoo.example.com", "Bakyt Dzhumabaev", [("a", Role.DISPATCHER)]),
-    ("requester1@alatoo.example.com", "Cholpon Ismailova", [("a", Role.REQUESTER)]),
-    ("requester2@alatoo.example.com", "Daniyar Kasymov", [("a", Role.REQUESTER)]),
-    ("requester3@alatoo.example.com", "Elnura Toktosunova", [("a", Role.REQUESTER)]),
-    ("tech1@alatoo.example.com", "Farid Abdyldaev", [("a", Role.TECHNICIAN)]),
-    ("tech2@alatoo.example.com", "Gulnara Sadykova", [("a", Role.TECHNICIAN)]),
-    ("tech3@alatoo.example.com", "Ilyas Mamytov", [("a", Role.TECHNICIAN)]),
-    ("tech4@alatoo.example.com", "Jyldyz Orozova", [("a", Role.TECHNICIAN)]),
-    ("admin@issykkul.example.com", "Kanat Beishenaliev", [("b", Role.ADMIN)]),
-    ("requester1@issykkul.example.com", "Leila Usenova", [("b", Role.REQUESTER)]),
-    ("requester2@issykkul.example.com", "Marat Zhakypov", [("b", Role.REQUESTER)]),
-    ("tech1@issykkul.example.com", "Nurlan Sydykov", [("b", Role.TECHNICIAN)]),
-    ("tech2@issykkul.example.com", "Olga Petrova", [("b", Role.TECHNICIAN)]),
+    ("admin@salymbekov.example.com", "Aigul Asanova", [("a", Role.ADMIN)]),
+    ("dispatcher@salymbekov.example.com", "Bakyt Dzhumabaev", [("a", Role.DISPATCHER)]),
+    ("requester1@salymbekov.example.com", "Cholpon Ismailova", [("a", Role.REQUESTER)]),
+    ("requester2@salymbekov.example.com", "Daniyar Kasymov", [("a", Role.REQUESTER)]),
+    ("requester3@salymbekov.example.com", "Elnura Toktosunova", [("a", Role.REQUESTER)]),
+    ("requester4@salymbekov.example.com", "Azamat Kurmanov", [("a", Role.REQUESTER)]),
+    ("tech1@salymbekov.example.com", "Farid Abdyldaev", [("a", Role.TECHNICIAN)]),
+    ("tech2@salymbekov.example.com", "Gulnara Sadykova", [("a", Role.TECHNICIAN)]),
+    ("tech3@salymbekov.example.com", "Ilyas Mamytov", [("a", Role.TECHNICIAN)]),
+    ("tech4@salymbekov.example.com", "Jyldyz Orozova", [("a", Role.TECHNICIAN)]),
+    ("admin@salymbekov-hospital.example.com", "Kanat Beishenaliev", [("b", Role.ADMIN)]),
+    ("requester1@salymbekov-hospital.example.com", "Leila Usenova", [("b", Role.REQUESTER)]),
+    ("requester2@salymbekov-hospital.example.com", "Marat Zhakypov", [("b", Role.REQUESTER)]),
+    ("tech1@salymbekov-hospital.example.com", "Nurlan Sydykov", [("b", Role.TECHNICIAN)]),
+    ("tech2@salymbekov-hospital.example.com", "Olga Petrova", [("b", Role.TECHNICIAN)]),
     # One person, two organizations, two different roles (SEED-03 / ROLE-02).
     (
-        "multi@fixflow.example.com",
+        "multi@salymbekov.example.com",
         "Timur Akmatov",
         [("a", Role.DISPATCHER), ("b", Role.REQUESTER)],
     ),
@@ -97,15 +98,15 @@ SKILLS = {
 }
 
 TECH_SKILLS = {
-    "tech1@alatoo.example.com": ["Electrical", "Elevator", "General"],
-    "tech2@alatoo.example.com": ["Plumbing", "General"],
-    "tech3@alatoo.example.com": ["HVAC", "Electrical"],
-    "tech4@alatoo.example.com": ["General", "Plumbing"],
-    "tech1@issykkul.example.com": ["Plumbing", "General"],
-    "tech2@issykkul.example.com": ["Electrical", "General"],
+    "tech1@salymbekov.example.com": ["Electrical", "Elevator", "General"],
+    "tech2@salymbekov.example.com": ["Plumbing", "General"],
+    "tech3@salymbekov.example.com": ["HVAC", "Electrical"],
+    "tech4@salymbekov.example.com": ["General", "Plumbing"],
+    "tech1@salymbekov-hospital.example.com": ["Plumbing", "General"],
+    "tech2@salymbekov-hospital.example.com": ["Electrical", "General"],
 }
 # Technicians who also work Saturdays (handy for weekend demos).
-SATURDAY_TECHS = {"tech2@alatoo.example.com", "tech1@issykkul.example.com"}
+SATURDAY_TECHS = {"tech2@salymbekov.example.com", "tech1@salymbekov-hospital.example.com"}
 
 # key, name, description, duration, required skills, enabled
 CATEGORIES: dict[str, list[tuple[str, str, str, int, list[str], bool]]] = {
@@ -153,70 +154,139 @@ CATEGORIES: dict[str, list[tuple[str, str, str, int, list[str], bool]]] = {
 
 # key, name, address, contact instructions, shared
 PROPERTIES: dict[str, list[tuple[str, str, str, str | None, bool]]] = {
+    # Every facility of organization "a" is restricted (is_shared=False): a requester can
+    # only file requests for the facilities of their own campus (see PROPERTY_CAMPUS and
+    # CAMPUS_REQUESTERS below).
     "a": [
+        # --- Salymbekov University main campus ---------------------------------
         (
-            "tower",
-            "Manas Business Tower",
-            "101 Manas Avenue, Bishkek",
-            "Report to security desk, floor 1.",
-            True,
+            "su_main",
+            "SU Main Academic Building",
+            "Salymbekov University main campus, Bishkek",
+            "Report to the security desk, floor 1.",
+            False,
         ),
         (
-            "plaza",
-            "Erkindik Plaza",
-            "45 Erkindik Boulevard, Bishkek",
-            "Call facility desk on arrival.",
-            True,
+            "su_medical",
+            "SU Medical Faculty Building",
+            "Salymbekov University main campus, Bishkek",
+            "Call the facilities desk on arrival.",
+            False,
         ),
-        ("mall", "Dordoi Retail Center", "12 Kozhevennaya Street, Bishkek", None, True),
         (
-            "clinic",
-            "Ala-Archa Clinic",
-            "8 Togolok Moldo Street, Bishkek",
+            "su_canteen",
+            "SU Student Canteen and Commons",
+            "Salymbekov University main campus, Bishkek",
+            None,
+            False,
+        ),
+        (
+            "su_clinic",
+            "SU University Teaching Clinic",
+            "Salymbekov University main campus, Bishkek",
             "Quiet hours 13:00-15:00.",
-            True,
+            False,
         ),
         (
-            "school",
-            "Bilim Secondary School",
-            "77 Chuy Avenue, Bishkek",
-            "Enter through the east gate.",
-            True,
+            "su_library",
+            "SU Library and Learning Center",
+            "Salymbekov University main campus, Bishkek",
+            "Check in at the library service desk.",
+            False,
         ),
-        ("depot", "Osh Bazaar Logistics Depot", "3 Beishenalieva Street, Bishkek", None, True),
         (
-            "vault",
-            "Kyrgyz Data Vault",
-            "19 Toktogul Street, Bishkek",
+            "su_depot",
+            "SU Campus Maintenance Depot",
+            "Salymbekov University main campus, Bishkek",
+            None,
+            False,
+        ),
+        (
+            "su_it",
+            "SU IT Data Center",
+            "Salymbekov University main campus, Bishkek",
             "Escort required. ID check at reception.",
+            False,
+        ),
+        # --- AIT campus --------------------------------------------------------
+        (
+            "ait_main",
+            "AIT Main Building",
+            "AIT campus, Bishkek",
+            "Report to the AIT front desk.",
+            False,
+        ),
+        (
+            "ait_labs",
+            "AIT Computer Labs",
+            "AIT campus, Bishkek",
+            "Ask the lab coordinator for access outside class hours.",
+            False,
+        ),
+        # --- College campus ----------------------------------------------------
+        (
+            "college_main",
+            "College Main Building",
+            "Salymbekov University College campus, Bishkek",
+            "Report to the college administration office.",
+            False,
+        ),
+        (
+            "college_workshop",
+            "College Training Workshop",
+            "Salymbekov University College campus, Bishkek",
+            "Check in with the workshop instructor.",
             False,
         ),
     ],
     "b": [
         (
             "resort",
-            "Cholpon-Ata Lakeside Resort",
-            "5 Sovetskaya Street, Cholpon-Ata",
-            "Ask for the duty manager.",
+            "University Hospital Main Block",
+            "Salymbekov University Hospital, Bishkek",
+            "Ask for the duty nurse manager.",
             True,
         ),
-        ("hotel", "Karakol Mountain Hotel", "22 Abdrakhmanov Street, Karakol", None, True),
+        ("hotel", "Outpatient Department", "Salymbekov University Hospital, Bishkek", None, True),
         (
             "villas",
-            "Bosteri Villas",
-            "14 Beach Road, Bosteri",
+            "Hospital Administration Building",
+            "Salymbekov University Hospital, Bishkek",
             "Gate code is provided by phone.",
             True,
         ),
     ],
 }
 
+# Which campus each facility of organization "a" belongs to, and which requesters work
+# on that campus. A requester can only see and file requests for their own campus.
+PROPERTY_CAMPUS = {
+    "su_main": "su",
+    "su_medical": "su",
+    "su_canteen": "su",
+    "su_clinic": "su",
+    "su_library": "su",
+    "su_depot": "su",
+    "su_it": "su",
+    "ait_main": "ait",
+    "ait_labs": "ait",
+    "college_main": "college",
+    "college_workshop": "college",
+}
+CAMPUS_REQUESTERS = {
+    "su": ["requester1@salymbekov.example.com", "requester2@salymbekov.example.com"],
+    "ait": ["requester3@salymbekov.example.com"],
+    "college": ["requester4@salymbekov.example.com"],
+}
+# Extra restriction inside a campus: only these requesters may use the facility.
+PROPERTY_ONLY = {"su_it": ["requester1@salymbekov.example.com"]}
+
 # key, property, code, name, type, serial, status
 ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]] = {
     "a": [
         (
             "ahu1",
-            "tower",
+            "su_main",
             "AHU-001",
             "Rooftop air handling unit 1",
             "HVAC",
@@ -225,7 +295,7 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
         ),
         (
             "lift1",
-            "tower",
+            "su_main",
             "ELV-001",
             "Passenger elevator A",
             "Elevator",
@@ -234,7 +304,7 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
         ),
         (
             "lift2",
-            "tower",
+            "su_main",
             "ELV-002",
             "Passenger elevator B",
             "Elevator",
@@ -243,43 +313,79 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
         ),
         (
             "panel1",
-            "tower",
+            "su_main",
             "ELP-001",
             "Main distribution panel",
             "Electrical",
             None,
             AssetStatus.ACTIVE,
         ),
-        ("boiler1", "plaza", "BLR-001", "Gas boiler", "Heating", "VS-10422", AssetStatus.ACTIVE),
+        ("boiler1", "su_medical", "BLR-001", "Gas boiler", "Heating", "VS-10422", AssetStatus.ACTIVE),
         (
             "pump1",
-            "plaza",
+            "su_medical",
             "PMP-001",
             "Booster pump",
             "Plumbing",
             "GF-7781",
             AssetStatus.OUT_OF_SERVICE,
         ),
-        ("chiller1", "mall", "CHL-001", "Water chiller", "HVAC", "CR-30019", AssetStatus.ACTIVE),
+        ("chiller1", "su_canteen", "CHL-001", "Water chiller", "HVAC", "CR-30019", AssetStatus.ACTIVE),
         (
             "gen1",
-            "clinic",
+            "su_clinic",
             "GEN-001",
             "Backup generator",
             "Electrical",
             "CT-90455",
             AssetStatus.ACTIVE,
         ),
-        ("ac1", "school", "SPL-001", "Split AC, staff room", "HVAC", None, AssetStatus.ACTIVE),
-        ("dock1", "depot", "DCK-001", "Loading dock door", "Doors", None, AssetStatus.ACTIVE),
+        ("ac1", "su_library", "SPL-001", "Split AC, reading hall", "HVAC", None, AssetStatus.ACTIVE),
+        ("dock1", "su_depot", "DCK-001", "Loading dock door", "Doors", None, AssetStatus.ACTIVE),
         (
             "oldboiler",
-            "plaza",
+            "su_medical",
             "BLR-000",
             "Old coal boiler",
             "Heating",
             "SU-1987",
             AssetStatus.RETIRED,
+        ),
+        (
+            "ait_ac1",
+            "ait_labs",
+            "AIT-AC-001",
+            "Computer lab precision AC",
+            "HVAC",
+            "AIT-40021",
+            AssetStatus.ACTIVE,
+        ),
+        (
+            "ait_ups1",
+            "ait_labs",
+            "AIT-UPS-001",
+            "Computer lab UPS",
+            "Electrical",
+            None,
+            AssetStatus.ACTIVE,
+        ),
+        (
+            "college_boiler",
+            "college_main",
+            "COL-BLR-001",
+            "College heating boiler",
+            "Heating",
+            "COL-55310",
+            AssetStatus.ACTIVE,
+        ),
+        (
+            "college_fan",
+            "college_workshop",
+            "COL-FAN-001",
+            "Workshop extraction fan",
+            "HVAC",
+            None,
+            AssetStatus.ACTIVE,
         ),
     ],
     "b": [
@@ -287,7 +393,7 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
             "pool1",
             "resort",
             "POL-001",
-            "Pool circulation pump",
+            "Hydrotherapy pool pump",
             "Plumbing",
             "HY-2210",
             AssetStatus.ACTIVE,
@@ -344,34 +450,42 @@ INVENTORY: dict[str, list[tuple[str, str, str, int, int, int]]] = {
 
 # (title, category, asset, property, priority)
 ISSUES_A: list[tuple[str, str, str | None, str, str]] = [
-    ("Air handling unit making a grinding noise", "hvac", "ahu1", "tower", "HIGH"),
-    ("Elevator A stops between floors", "elevator", "lift1", "tower", "HIGH"),
-    ("Water leak under the kitchen sink", "plumbing", None, "plaza", "NORMAL"),
-    ("Flickering lights in the east corridor", "electrical", None, "tower", "NORMAL"),
-    ("Boiler pressure keeps dropping", "plumbing", "boiler1", "plaza", "HIGH"),
-    ("Office door lock is jammed", "general", None, "clinic", "LOW"),
-    ("Chiller shows a high-pressure alarm", "hvac", "chiller1", "mall", "HIGH"),
-    ("Power sockets dead in meeting room 3", "electrical", "panel1", "tower", "NORMAL"),
-    ("Blocked drain in the restroom", "plumbing", None, "mall", "NORMAL"),
-    ("Staff room air conditioner not cooling", "hvac", "ac1", "school", "NORMAL"),
-    ("Loading dock door will not close fully", "general", "dock1", "depot", "NORMAL"),
-    ("Generator fails the weekly self-test", "electrical", "gen1", "clinic", "HIGH"),
-    ("Ceiling tile damaged by moisture", "general", None, "school", "LOW"),
-    ("Elevator B door closes too slowly", "elevator", "lift2", "tower", "NORMAL"),
-    ("Tap dripping in the reception area", "plumbing", None, "clinic", "LOW"),
-    ("Emergency exit sign is not lit", "electrical", None, "mall", "NORMAL"),
-    ("Booster pump vibrates heavily", "plumbing", "pump1", "plaza", "NORMAL"),
-    ("Broken window handle on floor 4", "general", None, "tower", "LOW"),
-    ("Thermostat reads the wrong temperature", "hvac", None, "plaza", "LOW"),
-    ("Circuit breaker trips every morning", "electrical", "panel1", "tower", "HIGH"),
-    ("Toilet cistern runs continuously", "plumbing", None, "school", "NORMAL"),
+    ("Air handling unit making a grinding noise", "hvac", "ahu1", "su_main", "HIGH"),
+    ("Elevator A stops between floors", "elevator", "lift1", "su_main", "HIGH"),
+    ("Water leak under the kitchen sink", "plumbing", None, "su_medical", "NORMAL"),
+    ("Flickering lights in the east corridor", "electrical", None, "su_main", "NORMAL"),
+    ("Boiler pressure keeps dropping", "plumbing", "boiler1", "su_medical", "HIGH"),
+    ("Office door lock is jammed", "general", None, "su_clinic", "LOW"),
+    ("Chiller shows a high-pressure alarm", "hvac", "chiller1", "su_canteen", "HIGH"),
+    ("Power sockets dead in meeting room 3", "electrical", "panel1", "su_main", "NORMAL"),
+    ("Blocked drain in the restroom", "plumbing", None, "su_canteen", "NORMAL"),
+    ("Reading hall air conditioner not cooling", "hvac", "ac1", "su_library", "NORMAL"),
+    ("Loading dock door will not close fully", "general", "dock1", "su_depot", "NORMAL"),
+    ("Generator fails the weekly self-test", "electrical", "gen1", "su_clinic", "HIGH"),
+    ("Ceiling tile damaged by moisture", "general", None, "su_library", "LOW"),
+    ("Elevator B door closes too slowly", "elevator", "lift2", "su_main", "NORMAL"),
+    ("Tap dripping in the reception area", "plumbing", None, "su_clinic", "LOW"),
+    ("Emergency exit sign is not lit", "electrical", None, "su_canteen", "NORMAL"),
+    ("Booster pump vibrates heavily", "plumbing", "pump1", "su_medical", "NORMAL"),
+    ("Broken window handle on floor 4", "general", None, "su_main", "LOW"),
+    ("Thermostat reads the wrong temperature", "hvac", None, "su_medical", "LOW"),
+    ("Circuit breaker trips every morning", "electrical", "panel1", "su_main", "HIGH"),
+    ("Toilet cistern runs continuously", "plumbing", None, "su_library", "NORMAL"),
+    # AIT campus
+    ("Computer lab air conditioner is not cooling", "hvac", "ait_ac1", "ait_labs", "HIGH"),
+    ("UPS in the computer lab beeps constantly", "electrical", "ait_ups1", "ait_labs", "NORMAL"),
+    ("Projector mount is loose in room 204", "general", None, "ait_main", "LOW"),
+    ("Water leak in the AIT second-floor restroom", "plumbing", None, "ait_main", "NORMAL"),
+    # College campus
+    ("College boiler pressure keeps dropping", "plumbing", "college_boiler", "college_main", "HIGH"),
+    ("Workshop extraction fan is very loud", "hvac", "college_fan", "college_workshop", "NORMAL"),
 ]
 
 ISSUES_B: list[tuple[str, str, str | None, str, str]] = [
-    ("Pool pump loses prime overnight", "plumbing", "pool1", "resort", "HIGH"),
+    ("Hydrotherapy pool pump loses prime overnight", "plumbing", "pool1", "resort", "HIGH"),
     ("Lobby door sensor is unreliable", "general", "door1", "hotel", "NORMAL"),
     ("No hot water in block A", "plumbing", "heater1", "resort", "HIGH"),
-    ("Villa 7 terrace door sticks", "general", None, "villas", "LOW"),
+    ("Office 7 door sticks", "general", None, "villas", "LOW"),
     ("Shower drain is slow in room 214", "plumbing", None, "hotel", "NORMAL"),
 ]
 
@@ -526,7 +640,7 @@ async def seed_reference(db: AsyncSession, timeline: Timeline) -> None:
         TechnicianTimeOff(
             id=sid("timeoff:tech4"),
             org_id=sid("org:a"),
-            technician_id=sid("tech:a:tech4@alatoo.example.com"),
+            technician_id=sid("tech:a:tech4@salymbekov.example.com"),
             start_at=timeline.at(6, 0),
             end_at=timeline.at(8, 0),
             reason="Annual leave",
@@ -569,14 +683,18 @@ async def seed_reference(db: AsyncSession, timeline: Timeline) -> None:
                 )
             )
     await db.flush()
-    # The restricted property is only usable by requester1 (ASSET-03).
-    db.add(
-        PropertyRequester(
-            org_id=sid("org:a"),
-            property_id=sid("property:a:vault"),
-            membership_id=sid("membership:a:requester1@alatoo.example.com"),
-        )
-    )
+    # Campus scoping (ASSET-03): every facility of organization "a" is restricted, and each
+    # requester is granted only the facilities of their own campus. An AIT requester can
+    # therefore never file a request for a Salymbekov University facility, and vice versa.
+    for prop_key, campus in PROPERTY_CAMPUS.items():
+        for email in PROPERTY_ONLY.get(prop_key, CAMPUS_REQUESTERS[campus]):
+            db.add(
+                PropertyRequester(
+                    org_id=sid("org:a"),
+                    property_id=sid(f"property:a:{prop_key}"),
+                    membership_id=sid(f"membership:a:{email}"),
+                )
+            )
 
     for org, assets in ASSETS.items():
         for key, prop, code, name, asset_type, serial, status in assets:
@@ -676,6 +794,15 @@ class OrgWorld:
     booked: set[tuple[str, date, int]] = field(default_factory=set)
     rotation: Any = None
 
+    def requester_for(self, prop: str, index: int) -> Actor:
+        """A requester who is allowed to file for this facility (campus scoping)."""
+        if self.key == "a":
+            allowed = PROPERTY_ONLY.get(prop, CAMPUS_REQUESTERS[PROPERTY_CAMPUS[prop]])
+            pool = [r for r in self.requesters if r.email in allowed]
+        else:
+            pool = self.requesters
+        return pool[index % len(pool)]
+
     def category_skills(self, category: str) -> set[str]:
         return next(set(c[4]) for c in CATEGORIES[self.key] if c[0] == category)
 
@@ -709,7 +836,7 @@ async def replay_request(
 ) -> dict[str, Any]:
     title, category, asset, prop, priority = issue
     org = world.key
-    requester = world.requesters[index % len(world.requesters)]
+    requester = world.requester_for(prop, index)
     dispatcher = world.dispatcher
     cmd = f"seed-{org}-{index:03d}"
 
@@ -766,7 +893,7 @@ async def replay_request(
     if target == "CANCELED":
         clock.pin(timeline.past(created_at + timedelta(hours=1)))
         return await dispatcher.post(
-            f"/requests/{rid}/cancel", {"reason": "Duplicate report from another tenant."}
+            f"/requests/{rid}/cancel", {"reason": "Duplicate report from another department."}
         )
     if target == "TRIAGED":
         return req
@@ -949,7 +1076,7 @@ async def seed_maintenance(world: OrgWorld, timeline: Timeline) -> None:
             (
                 "pool1",
                 "plumbing",
-                "Weekly pool pump inspection",
+                "Weekly hydrotherapy pool pump inspection",
                 "WEEKLY",
                 today - timedelta(days=3),
                 "NORMAL",
@@ -989,12 +1116,12 @@ async def seed_collision_candidate(world: OrgWorld, timeline: Timeline) -> None:
     clock.pin(timeline.anchor - timedelta(hours=2))
     requester = world.requesters[0]
     dispatcher = world.dispatcher
-    tech = "tech1@alatoo.example.com"
+    tech = "tech1@salymbekov.example.com"
     start = timeline.at(3, 14)
     end = start + timedelta(hours=2)
     base = {
         "category_id": str(sid("category:a:electrical")),
-        "property_id": str(sid("property:a:tower")),
+        "property_id": str(sid("property:a:su_main")),
         "priority": "NORMAL",
     }
     booked = await requester.post(
@@ -1002,7 +1129,7 @@ async def seed_collision_candidate(world: OrgWorld, timeline: Timeline) -> None:
         {
             **base,
             "title": "Replace lobby light fittings",
-            "description": "Six fittings in the main lobby flicker and need replacement before the tenant event.",
+            "description": "Six fittings in the main lobby flicker and need replacement before the university event.",
         },
     )
     await dispatcher.post(f"/requests/{booked['id']}/triage")
@@ -1065,26 +1192,26 @@ async def run() -> None:
 
             world_a = OrgWorld(
                 key="a",
-                dispatcher=actor("dispatcher@alatoo.example.com", "a"),
-                requesters=[actor(f"requester{i}@alatoo.example.com", "a") for i in (1, 2, 3)],
+                dispatcher=actor("dispatcher@salymbekov.example.com", "a"),
+                requesters=[actor(f"requester{i}@salymbekov.example.com", "a") for i in (1, 2, 3, 4)],
                 technicians={
-                    e: actor(e, "a") for e in TECH_SKILLS if e.endswith("alatoo.example.com")
+                    e: actor(e, "a") for e in TECH_SKILLS if e.endswith("@salymbekov.example.com")
                 },
             )
             world_b = OrgWorld(
                 key="b",
-                dispatcher=actor("admin@issykkul.example.com", "b"),
+                dispatcher=actor("admin@salymbekov-hospital.example.com", "b"),
                 requesters=[
-                    actor("requester1@issykkul.example.com", "b"),
-                    actor("requester2@issykkul.example.com", "b"),
-                    actor("multi@fixflow.example.com", "b"),
+                    actor("requester1@salymbekov-hospital.example.com", "b"),
+                    actor("requester2@salymbekov-hospital.example.com", "b"),
+                    actor("multi@salymbekov.example.com", "b"),
                 ],
                 technicians={
-                    e: actor(e, "b") for e in TECH_SKILLS if e.endswith("issykkul.example.com")
+                    e: actor(e, "b") for e in TECH_SKILLS if e.endswith("@salymbekov-hospital.example.com")
                 },
             )
             # Reserved for the collision-candidate demo below.
-            world_a.booked.add(("tech1@alatoo.example.com", timeline.workday(3), 14))
+            world_a.booked.add(("tech1@salymbekov.example.com", timeline.workday(3), 14))
             for world, issues, plan in ((world_a, ISSUES_A, PLAN_A), (world_b, ISSUES_B, PLAN_B)):
                 print(f"[seed] replaying {len(plan)} requests for organization {world.key} ...")
                 by_status: dict[str, list[dict[str, Any]]] = {}
@@ -1126,7 +1253,7 @@ async def run() -> None:
                             "title": "Server room cooling failure",
                             "description": "Temperature in the server room is rising. This demo request is deliberately left unscheduled so it is overdue.",
                             "category_id": str(sid("category:a:hvac")),
-                            "property_id": str(sid("property:a:tower")),
+                            "property_id": str(sid("property:a:su_main")),
                             "priority": "HIGH",
                         },
                     )

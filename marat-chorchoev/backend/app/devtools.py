@@ -43,7 +43,7 @@ async def _new_triaged(client, requester: dict, dispatcher: dict, title: str) ->
             "title": title,
             "description": "Created by the race simulation to demonstrate conflict handling.",
             "category_id": str(sid("category:a:electrical")),
-            "property_id": str(sid("property:a:tower")),
+            "property_id": str(sid("property:a:su_main")),
             "priority": "NORMAL",
         },
     )
@@ -56,14 +56,14 @@ async def _new_triaged(client, requester: dict, dispatcher: dict, title: str) ->
 
 
 async def race_assign(client: httpx.AsyncClient) -> None:
-    requester = await _login(client, "requester1@alatoo.example.com")
-    dispatcher = await _login(client, "dispatcher@alatoo.example.com")
+    requester = await _login(client, "requester1@salymbekov.example.com")
+    dispatcher = await _login(client, "dispatcher@salymbekov.example.com")
     tag = uuid.uuid4().hex[:6]
     first = await _new_triaged(client, requester, dispatcher, f"Race A {tag}")
     second = await _new_triaged(client, requester, dispatcher, f"Race B {tag}")
     start, end = _next_monday_slot(16)
     body = {
-        "technician_id": str(sid("tech:a:tech1@alatoo.example.com")),
+        "technician_id": str(sid("tech:a:tech1@salymbekov.example.com")),
         "start_at": start,
         "end_at": end,
     }
@@ -76,7 +76,7 @@ async def race_assign(client: httpx.AsyncClient) -> None:
 
 
 async def race_consume(client: httpx.AsyncClient) -> None:
-    admin = await _login(client, "admin@alatoo.example.com")
+    admin = await _login(client, "admin@salymbekov.example.com")
     item = str(sid("item:a:SLN-01"))
     print("Hint: this needs two IN_PROGRESS jobs; see docs/VERIFICATION.md for the exact setup.")
     response = await client.get("/api/v1/inventory", headers=admin, params={"q": "SLN-01"})

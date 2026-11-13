@@ -450,6 +450,46 @@ async def test_preferred_visit_must_be_in_the_future(world: World) -> None:
         json=payload(now - timedelta(days=60), now - timedelta(days=59)),
         headers={"Idempotency-Key": "past-visit-key-1"},
     )
+async def test_requesters_only_see_and_use_their_own_campus(world: World) -> None:
+    """A requester from one campus (e.g. AIT) cannot see or file for another (e.g. SU)."""
+    a = world.a
+    su = await world.ok(
+        a.dispatcher,
+        "POST",
+        "/properties",
+        json={
+            "name": "SU Main Building",
+            "address": "Salymbekov University, Bishkek",
+            "is_shared": False,
+            "requester_membership_ids": [str(a.requester.membership_id)],
+        },
+    )
+    ait = await world.ok(
+        a.dispatcher,
+        "POST",
+        "/properties",
+        json={
+            "name": "AIT Main Building",
+            "address": "AIT campus, Bishkek",
+            "is_shared": False,
+            "requester_membership_ids": [str(a.requester2.membership_id)],
+        },
+    )
+    # Each requester lists only their own campus's facility.
+    mine = await world.ok(a.requester, "GET", "/properties")
+    assert {p["id"] for p in mine["items"]} >= {su["id"]}
+    assert ait["id"] not in {p["id"] for p in mine["items"]}
+    theirs = await world.ok(a.requester2, "GET", "/properties")
+    assert ait["id"] in {p["id"] for p in theirs["items"]}
+    assert su["id"] not in {p["id"] for p in theirs["items"]}
+    # ...and cannot file a request for the other campus's facility.
+    foreign = request_body(a, property_id=ait["id"], asset_id=None)
+    denied = await world.post(a.requester, "/requests", foreign)
+    assert denied.status_code == 422 and error_code(denied) == "PROPERTY_NOT_ALLOWED"
+    own = request_body(a, property_id=su["id"], asset_id=None)
+    assert (await world.post(a.requester, "/requests", own)).status_code == 201
+
+
     assert past.status_code == 422
     assert error_code(past) == "PREFERRED_INTERVAL_IN_PAST"
 

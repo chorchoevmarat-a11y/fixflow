@@ -111,16 +111,23 @@ All accounts share the password **`FixFlow-Demo-2026!`**. They exist only in see
 
 | Organization | Role | Email |
 | --- | --- | --- |
-| Ala-Too Facility Services | Admin | `admin@alatoo.example.com` |
-| | Dispatcher | `dispatcher@alatoo.example.com` |
-| | Requesters | `requester1@alatoo.example.com` … `requester3@…` |
-| | Technicians | `tech1@alatoo.example.com` … `tech4@…` |
-| Issyk-Kul Property Care | Admin | `admin@issykkul.example.com` |
-| | Requesters | `requester1@issykkul.example.com`, `requester2@…` |
-| | Technicians | `tech1@issykkul.example.com`, `tech2@…` |
-| **Both** | Dispatcher in Ala-Too, requester in Issyk-Kul | `multi@fixflow.example.com` |
+| Salymbekov University Facilities | Admin | `admin@salymbekov.example.com` |
+| | Dispatcher | `dispatcher@salymbekov.example.com` |
+| | Requesters, SU main campus | `requester1@salymbekov.example.com`, `requester2@…` |
+| | Requester, AIT campus | `requester3@salymbekov.example.com` |
+| | Requester, College campus | `requester4@salymbekov.example.com` |
+| | Technicians | `tech1@salymbekov.example.com` … `tech4@…` |
+| Salymbekov University Hospital | Admin | `admin@salymbekov-hospital.example.com` |
+| | Requesters | `requester1@salymbekov-hospital.example.com`, `requester2@…` |
+| | Technicians | `tech1@salymbekov-hospital.example.com`, `tech2@…` |
+| **Both** | Dispatcher in Facilities, requester in Hospital | `multi@salymbekov.example.com` |
 
-Seed data: 2 organizations, 15 users, 10 properties, 15 assets, 8 categories, 20 inventory items,
+**Campus scoping.** Requesters can only see and file requests for the facilities of their own campus
+(SU main campus, AIT, or College). An AIT requester cannot pick or submit a Salymbekov University
+facility, and vice versa. The API rejects it with `PROPERTY_NOT_ALLOWED`. Staff manage who may use a
+facility on the Properties page.
+
+Seed data: 2 organizations, 16 users, 13 properties (11 across the three campuses), 19 assets, 8 categories, 20 inventory items,
 59 requests (every status and priority, estimate states, evidence, feedback, asset history, overdue items,
 a collision candidate), 4 maintenance plans (one already due), low-stock items.
 
@@ -143,7 +150,7 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
   allow port 8000 through the computer's firewall and type `http://<computer-LAN-IP>:8000` into the **Server
   address** field. The address is stored on the device, so nothing is baked into the APK. A build-time default
   can be set with `--dart-define=API_BASE_URL=http://192.168.1.20:8000`.
-* Sign in as a technician (e.g. `tech1@alatoo.example.com`). Dispatchers and requesters use the web app.
+* Sign in as a technician (e.g. `tech1@salymbekov.example.com`). Dispatchers and requesters use the web app.
 * Offline demo: open a job while online, turn on airplane mode, write a note and attach a photo
   (**Pending sync** appears), restart the app, turn the network back on — it is delivered exactly once.
   If only the server was unreachable (Wi-Fi stayed on), no network event fires: tap **Retry** in the offline
