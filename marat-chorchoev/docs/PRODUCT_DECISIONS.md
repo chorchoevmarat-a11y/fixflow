@@ -60,7 +60,9 @@ time instead, plus later alternatives.
 8. **Materials and lifecycle actions are online-only on mobile.** Stock is shared and must never be decremented
    from a stale local copy; the UI says why a button is disabled offline instead of faking success.
 9. **Spam guard: an identical open request is never filed twice.** If a requester submits a request with the
-   same property, asset, category, title and description (compared ignoring case and extra spaces) as one of
+   same property, asset, category, priority, title and description (text compared ignoring case and extra
+   spaces; a different priority counts as a new request; simultaneous sends are serialized with a database
+   advisory lock so they also collapse into one) as one of
    their own requests that is still open (anything except COMPLETED, CLOSED or CANCELED), the API returns that
    original request with `200` and `"deduplicated": true` instead of creating a new one, so dispatchers see a
    single entry rather than a pile of repeats from double-sends, impatient re-submits or retries. Once the

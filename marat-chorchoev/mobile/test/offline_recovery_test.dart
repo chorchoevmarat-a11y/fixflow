@@ -80,8 +80,17 @@ void main() {
       ],
       child: const MaterialApp(home: JobsScreen()),
     ));
-    await tester.pump(const Duration(milliseconds: 200));
-    await tester.pump(const Duration(milliseconds: 200));
+    // The store does real file I/O, so wait on the condition (up to ~15 s of real time)
+    // instead of a fixed delay: a fixed delay fails when the whole suite runs in parallel.
+    Future<void> settleUntil(bool Function() done) async {
+      for (var i = 0; i < 150 && !done(); i++) {
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 100)));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    await settleUntil(() => find.textContaining('Offline').evaluate().isNotEmpty);
 
     // The first load failed: the banner says offline.
     expect(find.textContaining('Offline'), findsOneWidget);
@@ -100,13 +109,7 @@ void main() {
     api.reachable = true;
     await tester.tap(find.text('Retry'));
     // Saving the jobs cache is real file I/O: give real time to pass, then repaint.
-    for (var i = 0;
-        i < 10 && find.textContaining('Offline').evaluate().isNotEmpty;
-        i++) {
-      await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 100)));
-      await tester.pump(const Duration(milliseconds: 50));
-    }
+    await settleUntil(() => find.textContaining('Offline').evaluate().isEmpty);
 
     expect(api.calls, 2);
     expect(find.textContaining('Offline'), findsNothing);

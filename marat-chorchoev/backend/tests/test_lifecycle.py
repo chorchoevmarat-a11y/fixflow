@@ -1,5 +1,7 @@
 """Request lifecycle, permissions, and audit (LIFE-01..09, E2E-01)."""
 
+import asyncio
+
 from sqlalchemy import func, select
 
 from app.database import SessionLocal
@@ -399,6 +401,27 @@ async def test_identical_open_request_is_not_created_twice(world: World) -> None
     )
     fresh = await create_request(world, a, title="Air handler is making noise")
     assert fresh["id"] != first["id"]
+
+
+async def test_same_text_with_a_different_priority_is_a_new_request(world: World) -> None:
+    a = world.a
+    first = await create_request(world, a, title="Corridor light is flickering")
+    assert first["priority"] == "HIGH"  # the helper's default
+    lower = await world.post(
+        a.requester,
+        "/requests",
+        request_body(a, title="Corridor light is flickering", priority="LOW"),
+    )
+    assert lower.status_code == 201
+    assert lower.json()["id"] != first["id"] and lower.json()["priority"] == "LOW"
+
+
+async def test_simultaneous_identical_submissions_create_one_request(world: World) -> None:
+    a = world.a
+    body = request_body(a, title="Simultaneous double click probe")
+    responses = await asyncio.gather(*(world.post(a.requester, "/requests", body) for _ in range(5)))
+    assert sorted(r.status_code for r in responses) == [200, 200, 200, 200, 201]
+    assert len({r.json()["id"] for r in responses}) == 1
 
 
 async def test_duplicate_link_is_kept(world: World) -> None:

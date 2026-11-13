@@ -96,6 +96,8 @@ export interface Estimate {
 
 export interface RequestDetail extends Omit<RequestRow, "property" | "category"> {
   description: string;
+  /** Set by the server when an identical open request already existed and was returned instead. */
+  deduplicated?: boolean;
   organization: { id: string; name: string; timezone: string };
   requester: { id: string; full_name: string; email?: string };
   property: { id: string; name: string; address: string; contact_instructions: string | null };

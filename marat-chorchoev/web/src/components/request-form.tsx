@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
-import { Button, Card, ErrorNote, Notice, SelectField, TextArea, TextField } from "@/components/ui";
+import { Button, Card, ErrorNote, Notice, SelectField, TextArea, TextField, useToast } from "@/components/ui";
 import { api, ApiError, newCommandId } from "@/lib/api";
 import { useAction, useApiQuery } from "@/lib/hooks";
 import { validateRequestForm, type Errors } from "@/lib/validation";
@@ -11,6 +11,7 @@ import type { AssetItem, Category, Page, PropertyItem, RequestDetail } from "@/l
 /** Request intake form: client validation mirrors the server, which stays authoritative. */
 export function RequestForm() {
   const router = useRouter();
+  const toast = useToast();
   const categories = useApiQuery<Category[]>("/categories", { enabled_only: true });
   const properties = useApiQuery<Page<PropertyItem>>("/properties", { page_size: 100 });
   const [values, setValues] = useState({ title: "", description: "", category_id: "", property_id: "", asset_id: "", priority: "NORMAL" });
@@ -39,6 +40,8 @@ export function RequestForm() {
         preferred_end_at: prefEnd ? new Date(prefEnd).toISOString() : null,
       };
       const created = await api.post<RequestDetail>("/requests", body, { "Idempotency-Key": key.current });
+      // An identical open request already existed: do not attach the photos a second time.
+      if (created.deduplicated) return created;
       for (const file of files) {
         const form = new FormData();
         form.set("file", file);
@@ -49,8 +52,15 @@ export function RequestForm() {
       return created;
     },
     {
-      success: "Request submitted.",
-      onSuccess: (created) => router.push(`/requests/${created.id}`),
+      onSuccess: (created) => {
+        toast(
+          "success",
+          created.deduplicated
+            ? "You already have an identical open request. Showing it instead of creating another."
+            : "Request submitted.",
+        );
+        router.push(`/requests/${created.id}`);
+      },
       silentError: true,
     },
   );

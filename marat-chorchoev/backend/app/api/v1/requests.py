@@ -172,7 +172,22 @@ def _norm_text(value: str) -> str:
 async def _find_identical_open_request(
     db: AsyncSession, ctx: Ctx, body: RequestCreate
 ) -> ServiceRequest | None:
-    """An unfinished request by this requester with the same place, category and wording."""
+    """An unfinished request by this requester with the same place, category, priority and wording."""
+    # Serialize concurrent identical submissions: without this, N simultaneous sends all pass
+    # the check below and create N requests. The lock is released when the transaction ends.
+    lock_key = "|".join(
+        [
+            str(ctx.org_id),
+            str(ctx.user.id),
+            str(body.property_id),
+            str(body.asset_id),
+            str(body.category_id),
+            str(body.priority),
+            _norm_text(body.title),
+            _norm_text(body.description),
+        ]
+    )
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0))))
     return (
         await db.execute(
             select(R)
@@ -182,6 +197,7 @@ async def _find_identical_open_request(
                 R.property_id == body.property_id,
                 R.asset_id.is_(None) if body.asset_id is None else R.asset_id == body.asset_id,
                 R.category_id == body.category_id,
+                R.priority == body.priority,
                 R.status.not_in([S.CLOSED, S.CANCELED, S.COMPLETED]),
                 _norm(R.title) == _norm_text(body.title),
                 _norm(R.description) == _norm_text(body.description),
