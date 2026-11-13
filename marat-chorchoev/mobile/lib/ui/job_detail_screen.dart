@@ -55,8 +55,17 @@ class _JobDetailScreenState extends ConsumerState<JobDetailScreen> {
         await ref.read(jobsProvider.notifier).remove(widget.jobId);
         if (mounted) Navigator.of(context).pop();
       } else {
-        final fresh = await ref.read(apiProvider).jobDetail(widget.jobId);
-        await ref.read(jobsProvider.notifier).replace(fresh);
+        // The command already succeeded on the server. If only the refresh fails, say so
+        // instead of claiming nothing changed (which would invite a confusing second tap).
+        try {
+          final fresh = await ref.read(apiProvider).jobDetail(widget.jobId);
+          await ref.read(jobsProvider.notifier).replace(fresh);
+        } on ApiException {
+          messenger.showSnackBar(const SnackBar(
+              content: Text(
+                  'Done on the server, but the job could not be refreshed. Pull down to refresh.')));
+          return;
+        }
       }
       messenger.showSnackBar(SnackBar(content: Text(success ?? 'Done')));
     } on ApiException catch (e) {

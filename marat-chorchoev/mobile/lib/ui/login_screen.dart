@@ -38,9 +38,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _busy = true;
       _error = null;
     });
-    final error = await ref
-        .read(sessionProvider.notifier)
-        .signIn(_server.text, _email.text, _password.text);
+    String? error;
+    try {
+      error = await ref
+          .read(sessionProvider.notifier)
+          .signIn(_server.text, _email.text, _password.text);
+    } catch (_) {
+      error = 'Sign-in failed unexpectedly. Please try again.';
+    }
     if (!mounted) return;
     setState(() {
       _busy = false;

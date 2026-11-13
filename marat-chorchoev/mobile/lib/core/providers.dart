@@ -179,10 +179,13 @@ class SessionNotifier extends Notifier<SessionState> {
       if (orgId != null) await _persist();
       return null;
     } on ApiException catch (e) {
+      if (e.code == 'BAD_ADDRESS') return e.message;
       if (e.isNetwork) {
         return 'Cannot reach $url. Check the server address and your connection.';
       }
       return e.message;
+    } catch (_) {
+      return 'Sign-in failed unexpectedly. Check the server address and try again.';
     }
   }
 

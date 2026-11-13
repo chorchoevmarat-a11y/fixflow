@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
@@ -61,6 +62,11 @@ class HttpFixflowApi implements FixflowApi {
   final String? Function() orgId;
   final http.Client _client;
 
+  static const _badAddress = ApiException(0, 'BAD_ADDRESS',
+      'The server address is not valid. Use the form http://192.168.1.20:8000');
+  static const _badResponse = ApiException(502, 'BAD_RESPONSE',
+      'The server sent an unexpected answer. Check the server address.');
+
   Uri _uri(String path, [Map<String, String>? query]) {
     final root = baseUrl.replaceAll(RegExp(r'/+$'), '');
     return Uri.parse('$root${AppConfig.apiPrefix}$path')
@@ -82,20 +88,30 @@ class HttpFixflowApi implements FixflowApi {
     final http.Response response;
     try {
       response = await call().timeout(const Duration(seconds: 20));
-    } on SocketException {
-      throw const ApiException(0, 'NETWORK_ERROR', 'Cannot reach the server.');
     } on TimeoutException {
       throw const ApiException(
           0, 'NETWORK_ERROR', 'The server took too long to answer.');
+    } on IOException {
+      // SocketException, TLS HandshakeException, connection resets, ...
+      throw const ApiException(0, 'NETWORK_ERROR', 'Cannot reach the server.');
     } on http.ClientException {
       throw const ApiException(0, 'NETWORK_ERROR', 'Cannot reach the server.');
+    } on FormatException {
+      throw _badAddress;
+    } on ArgumentError {
+      throw _badAddress; // e.g. "No host specified in URI" for a mistyped address
+    } on UnsupportedError {
+      throw _badAddress;
     }
     dynamic data;
-    if (response.body.isNotEmpty) {
+    var unreadable = false;
+    final bytes = response.bodyBytes;
+    if (bytes.isNotEmpty) {
       try {
-        data = jsonDecode(utf8.decode(response.bodyBytes));
+        data = jsonDecode(utf8.decode(bytes));
       } catch (_) {
         data = null;
+        unreadable = true;
       }
     }
     if (response.statusCode >= 400) {
@@ -109,6 +125,9 @@ class HttpFixflowApi implements FixflowApi {
             ? (error['message'] as String? ?? 'Request failed.')
             : 'Request failed (${response.statusCode}).',
       );
+    }
+    if (unreadable) {
+      throw _badResponse; // e.g. a captive portal answering 200 with HTML
     }
     return data;
   }
@@ -130,19 +149,26 @@ class HttpFixflowApi implements FixflowApi {
         },
         body: jsonEncode({'email': email, 'password': password}),
       ),
-    ) as Map<String, dynamic>;
-    final user = (data['user'] as Map).cast<String, dynamic>();
-    return LoginResult(
-      token: data['access_token'] as String,
-      expiresAt: DateTime.parse(data['expires_at'] as String),
-      userId: user['id'] as String,
-      email: user['email'] as String,
-      fullName: user['full_name'] as String,
-      memberships: [
-        for (final m in data['memberships'] as List)
-          Membership.fromJson((m as Map).cast<String, dynamic>()),
-      ],
     );
+    try {
+      final body = (data as Map).cast<String, dynamic>();
+      final user = (body['user'] as Map).cast<String, dynamic>();
+      return LoginResult(
+        token: body['access_token'] as String,
+        expiresAt: DateTime.parse(body['expires_at'] as String),
+        userId: user['id'] as String,
+        email: user['email'] as String,
+        fullName: user['full_name'] as String,
+        memberships: [
+          for (final m in body['memberships'] as List)
+            Membership.fromJson((m as Map).cast<String, dynamic>()),
+        ],
+      );
+    } on TypeError {
+      throw _badResponse;
+    } on FormatException {
+      throw _badResponse;
+    }
   }
 
   @override
@@ -154,13 +180,21 @@ class HttpFixflowApi implements FixflowApi {
   Future<List<Job>> assignedJobs() async {
     final list = await _get('/requests',
         {'page_size': '100', 'open_only': 'true', 'sort': 'due'}) as Map;
+    final ids = [
+      for (final row in list['items'] as List) (row as Map)['id'] as String,
+    ];
     final jobs = <Job>[];
-    for (final row in list['items'] as List) {
-      // The list row is lightweight; fetch the detail so offline view has everything.
-      final job = await jobDetail((row as Map)['id'] as String);
-      // The server also lets a technician see jobs they finished (history), e.g. a
-      // reopened one now handled by someone else. The inbox shows only current work.
-      if (job.json['assigned_to_me'] == true) jobs.add(job);
+    // The list row is lightweight; fetch each detail so the offline view has everything.
+    // A few at a time: one-by-one made the inbox slow on a mobile connection.
+    for (var i = 0; i < ids.length; i += 5) {
+      final batch = ids.sublist(i, math.min(i + 5, ids.length));
+      final details =
+          await Future.wait([for (final id in batch) jobDetail(id)]);
+      for (final job in details) {
+        // The server also lets a technician see jobs they finished (history), e.g. a
+        // reopened one now handled by someone else. The inbox shows only current work.
+        if (job.json['assigned_to_me'] == true) jobs.add(job);
+      }
     }
     return jobs;
   }
@@ -217,6 +251,10 @@ class HttpFixflowApi implements FixflowApi {
     String? noteId,
     String? assignmentId,
   }) async {
+    if (!await File(path).exists()) {
+      throw const ApiException(422, 'FILE_MISSING',
+          'A photo for this note is no longer stored on the device.');
+    }
     await _send(() async {
       final request =
           http.MultipartRequest('POST', _uri('/requests/$requestId/files'))

@@ -70,8 +70,12 @@ class _CompleteScreenState extends ConsumerState<CompleteScreen> {
     try {
       await ref.read(apiProvider).transition(widget.job.id, 'complete',
           body: {'completion_note': note});
-      final fresh = await ref.read(apiProvider).jobDetail(widget.job.id);
-      await ref.read(jobsProvider.notifier).replace(fresh);
+      try {
+        final fresh = await ref.read(apiProvider).jobDetail(widget.job.id);
+        await ref.read(jobsProvider.notifier).replace(fresh);
+      } on ApiException {
+        // Completion itself succeeded; only the local refresh failed. Do not claim otherwise.
+      }
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Job completed')));

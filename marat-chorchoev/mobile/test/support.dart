@@ -61,6 +61,9 @@ class FakeServer implements FixflowApi {
   /// Throw this from createNote (conflict / network simulation).
   ApiException? createNoteError;
 
+  /// Throw this non-API error from createNote (TLS failure, malformed reply, I/O error...).
+  Object? createNoteThrows;
+
   /// Fail the Nth image upload once (simulates a dropped connection mid-delivery).
   int? failImageAt;
   bool _failedOnce = false;
@@ -76,6 +79,8 @@ class FakeServer implements FixflowApi {
     noteCreates++;
     final error = createNoteError;
     if (error != null) throw error;
+    final unexpected = createNoteThrows;
+    if (unexpected != null) throw unexpected;
     return notesByCommand.putIfAbsent(
         commandId, () => 'note-${notesByCommand.length + 1}');
   }

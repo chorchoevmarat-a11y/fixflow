@@ -35,10 +35,22 @@ class LocalStore {
     return LocalStore._(directory, data);
   }
 
-  Future<void> _flush() async {
+  Future<void> _flushing = Future.value();
+
+  /// Writes are queued one after another: two overlapping writes would share the same
+  /// temporary file, and the second rename would fail (or publish a half-written file).
+  Future<void> _flush() {
+    final next = _flushing.catchError((_) {}).then((_) => _writeNow());
+    _flushing = next;
+    return next;
+  }
+
+  Future<void> _writeNow() async {
     final file = File(p.join(directory.path, 'state.json'));
     final temp = File('${file.path}.tmp');
-    await temp.writeAsString(jsonEncode(_data), flush: true);
+    // Snapshot first: _data may change while the (async) write is in flight.
+    final json = jsonEncode(_data);
+    await temp.writeAsString(json, flush: true);
     await temp.rename(file.path);
   }
 

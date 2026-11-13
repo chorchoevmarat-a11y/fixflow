@@ -151,6 +151,16 @@ class SyncService {
           failed++;
         }
         await _save(note);
+      } catch (_) {
+        // Anything unexpected (TLS failure, malformed reply, unreadable file...): never leave
+        // the note stuck in "syncing". It is shown as failed and can be retried explicitly;
+        // the rest of the queue keeps going.
+        note
+          ..state = QueueState.failed
+          ..reason =
+              'Something unexpected went wrong while sending. Tap Retry to try again.';
+        failed++;
+        await _save(note);
       }
     }
     return SyncReport(
