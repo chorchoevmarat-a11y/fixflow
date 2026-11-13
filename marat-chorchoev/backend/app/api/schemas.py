@@ -1,14 +1,29 @@
 """Shared request-body building blocks."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+
+def _reject_nul(value: Any) -> Any:
+    """PostgreSQL cannot store U+0000 in text; reject it as a 422 instead of failing with a 500."""
+    if isinstance(value, str) and "\x00" in value:
+        raise ValueError("Text must not contain NUL (U+0000) characters.")
+    if isinstance(value, list | tuple):
+        for item in value:
+            _reject_nul(item)
+    return value
 
 
 class Body(BaseModel):
     """Strict request body: unknown fields are rejected, strings are trimmed."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _no_nul_characters(cls, value: Any) -> Any:
+        return _reject_nul(value)
 
 
 Reason = Annotated[str, StringConstraints(min_length=3, max_length=1000)]

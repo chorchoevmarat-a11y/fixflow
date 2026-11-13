@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import Body, Money, Quantity, Reason
 from app.core.deps import DB, Ctx, CurrentCtx, RequesterCtx, StaffCtx
-from app.core.errors import Conflict, NotFound
+from app.core.errors import Conflict, NotFound, Unprocessable
 from app.models.base import utcnow
 from app.models.models import (
     Estimate,
@@ -65,6 +65,10 @@ class WithdrawBody(Body):
     reason: Reason
 
 
+# 10 trillion minor units (100 billion KGS): far above any real job, far below the BIGINT limit.
+MAX_ESTIMATE_TOTAL_MINOR = 10**13
+
+
 def labor_total(minutes: int, rate_per_hour_minor: int) -> int:
     """Round-half-up to whole minor units using integer arithmetic only (DATA-04)."""
     return (minutes * rate_per_hour_minor + 30) // 60
@@ -88,6 +92,9 @@ def _apply(estimate: Estimate, body: EstimateBody) -> list[EstimateLine]:
     estimate.labor_total_minor = labor_total(body.labor_minutes, body.labor_rate_minor)
     estimate.materials_total_minor = sum(line.line_total_minor for line in lines)
     estimate.total_minor = estimate.labor_total_minor + estimate.materials_total_minor
+    if estimate.total_minor > MAX_ESTIMATE_TOTAL_MINOR:
+        # Individually valid lines can still sum past BIGINT; refuse instead of a 500.
+        raise Unprocessable("The estimate total is too large.", code="ESTIMATE_TOTAL_TOO_LARGE")
     estimate.notes = body.notes
     return lines
 

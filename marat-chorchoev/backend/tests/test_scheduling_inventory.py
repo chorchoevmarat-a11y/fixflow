@@ -307,3 +307,16 @@ async def test_smart_slot_suggestions_are_bookable(world: World) -> None:
     # Suggestions only exist for triaged requests.
     again = await world.get(a.dispatcher, f"/requests/{req['id']}/suggestions")
     assert again.status_code == 409
+
+
+async def test_inventory_codes_are_unique_ignoring_case_and_api_sends_no_store(
+    world: World,
+) -> None:
+    a = world.a
+    body = {"code": "CASE-1", "name": "Case probe item", "unit": "pcs"}
+    first = await world.call(a.admin, "POST", "/inventory", json=body)
+    assert first.status_code == 201, first.text
+    assert first.headers["cache-control"] == "private, no-store"
+    assert first.headers["x-content-type-options"] == "nosniff"
+    again = await world.call(a.admin, "POST", "/inventory", json={**body, "code": "case-1"})
+    assert again.status_code == 409, again.text

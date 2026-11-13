@@ -363,3 +363,46 @@ async def test_retired_asset_blocks_plans_and_generation(world: World) -> None:
     )
     assert retired_request.status_code == 422 and error_code(retired_request) == "ASSET_RETIRED"
     _ = (plan, cmd, slot)
+
+
+async def test_estimate_total_overflow_is_rejected_not_a_server_error(world: World) -> None:
+    a = world.a
+    req = await to_triaged(world, a)
+    huge = {"description": "x", "quantity": 1_000_000, "unit_price_minor": 10**12}
+    overflow = await world.post(
+        a.dispatcher,
+        f"/requests/{req['id']}/estimates",
+        {**EST, "lines": [huge] * 10},  # 1e19 > BIGINT max
+    )
+    assert overflow.status_code == 422, overflow.text
+    assert error_code(overflow) == "ESTIMATE_TOTAL_TOO_LARGE"
+
+
+async def test_extreme_dates_are_rejected_not_a_server_error(world: World) -> None:
+    from app.models.base import utcnow
+
+    a = world.a
+    req = await to_triaged(world, a)
+    techs = await world.ok(a.dispatcher, "GET", "/technicians")
+    tech_id = (techs["items"] if isinstance(techs, dict) else techs)[0]["id"]
+    far = await world.call(
+        a.dispatcher,
+        "POST",
+        f"/requests/{req['id']}/assign",
+        json={
+            "technician_id": tech_id,
+            "start_at": "9999-12-31T10:00:00Z",
+            "end_at": "9999-12-31T12:00:00Z",
+        },
+        headers={"Idempotency-Key": "far-future-assign-1"},
+    )
+    assert far.status_code == 422, far.text
+    assert error_code(far) == "SLOT_TOO_FAR"
+    assert utcnow().year < 9999
+    for path in (
+        "/reports/dashboard?date_to=9999-12-31",
+        "/reports/dashboard?date_from=0001-01-01&date_to=0001-01-02",
+        "/schedule?date_from=9999-12-31&date_to=9999-12-31",
+    ):
+        response = await world.call(a.dispatcher, "GET", path)
+        assert response.status_code == 422, (path, response.text)

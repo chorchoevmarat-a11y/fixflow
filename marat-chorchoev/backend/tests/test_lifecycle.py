@@ -509,3 +509,34 @@ async def test_search_treats_wildcards_as_literal_text(world: World) -> None:
         assert found["total"] == 0, f"{wildcard!r} must not match every row"
         found = await world.ok(a.dispatcher, "GET", "/properties", params={"q": wildcard})
         assert found["total"] == 0, f"{wildcard!r} must not match every property"
+
+
+async def test_nul_characters_are_rejected_not_a_server_error(world: World) -> None:
+    a = world.a
+    created = await create_request(world, a)
+    rid = created["id"]
+    nul = "bad\x00value in a long enough text"
+
+    for body in (request_body(a, title=nul), request_body(a, description=nul)):
+        response = await world.call(
+            a.requester,
+            "POST",
+            "/requests",
+            json=body,
+            headers={
+                "Idempotency-Key": f"nul-key-{abs(hash(body['title'] + body['description']))}"
+            },
+        )
+        assert response.status_code == 422, response.text
+
+    note = await world.call(
+        a.dispatcher,
+        "POST",
+        f"/requests/{rid}/notes",
+        json={"body": nul, "client_command_id": "nul-note-0001"},
+    )
+    assert note.status_code == 422, note.text
+    cancel = await world.call(a.requester, "POST", f"/requests/{rid}/cancel", json={"reason": nul})
+    assert cancel.status_code == 422, cancel.text
+    search = await world.call(a.dispatcher, "GET", "/requests?q=a%00b")
+    assert search.status_code == 422, search.text

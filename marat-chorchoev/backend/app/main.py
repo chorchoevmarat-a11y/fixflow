@@ -155,6 +155,22 @@ class RequestContextMiddleware:
             request_id_var.reset(token)
             return
 
+        if b"%00" in scope.get("query_string", b"").lower():
+            # PostgreSQL cannot compare/store U+0000; refuse it up front (422, not a 500).
+            rejected = JSONResponse(
+                error_body(
+                    "VALIDATION_ERROR",
+                    "Query parameters must not contain NUL (U+0000) characters.",
+                    request_id,
+                ),
+                status_code=422,
+                headers={"X-Request-ID": request_id},
+            )
+            status_holder["status"] = 422
+            await rejected(scope, receive, send)
+            request_id_var.reset(token)
+            return
+
         class _BodyTooLarge(Exception):
             pass
 
@@ -172,9 +188,14 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 response_started = True
                 status_holder["status"] = message["status"]
-                message.setdefault("headers", []).append(
-                    (b"x-request-id", request_id.encode("latin-1"))
-                )
+                response_headers = message.setdefault("headers", [])
+                present = {name.lower() for name, _ in response_headers}
+                response_headers.append((b"x-request-id", request_id.encode("latin-1")))
+                # Authenticated JSON must never be cached by browsers or proxies.
+                if b"cache-control" not in present:
+                    response_headers.append((b"cache-control", b"private, no-store"))
+                if b"x-content-type-options" not in present:
+                    response_headers.append((b"x-content-type-options", b"nosniff"))
             await send(message)
 
         try:

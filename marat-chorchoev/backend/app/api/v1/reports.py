@@ -48,6 +48,9 @@ def _bounds(ctx: Ctx, date_from: date, date_to: date) -> tuple[datetime, datetim
     """[start, end) UTC instants for an inclusive organization-local date range."""
     if date_to < date_from:
         raise Unprocessable("date_to must not be before date_from.", code="RANGE_INVALID")
+    if date_from.year < 1970 or date_to.year > 2100:
+        # Extreme dates overflow timezone/calendar arithmetic below (a 500) and are never useful.
+        raise Unprocessable("Dates must be between 1970 and 2100.", code="RANGE_INVALID")
     if (date_to - date_from).days > MAX_RANGE_DAYS:
         raise Unprocessable("Date range is limited to one year.", code="RANGE_TOO_LARGE")
     tz = ZoneInfo(ctx.org.timezone)

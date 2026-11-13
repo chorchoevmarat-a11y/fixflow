@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import Field
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import Body, CommandId, Money, Quantity
@@ -125,7 +125,8 @@ async def list_items(
 async def create_item(body: ItemCreate, ctx: AdminCtx, db: DB) -> dict[str, Any]:
     if await db.scalar(
         select(InventoryItem.id).where(
-            InventoryItem.org_id == ctx.org_id, InventoryItem.code == body.code
+            InventoryItem.org_id == ctx.org_id,
+            func.lower(InventoryItem.code) == body.code.lower(),
         )
     ):
         raise Conflict("An item with this code already exists.", code="ITEM_CODE_EXISTS")

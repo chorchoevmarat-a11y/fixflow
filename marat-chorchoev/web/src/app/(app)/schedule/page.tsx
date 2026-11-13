@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { AuthGuard } from "@/components/auth-guard";
 import { Button, Card, Empty, ErrorNote, PageHeader, SelectField, Spinner } from "@/components/ui";
 import { addDays, fmtDay, fmtTime, localDate, WEEKDAYS, zonedToUtc } from "@/lib/format";
 import { useApiQuery } from "@/lib/hooks";
@@ -34,7 +35,7 @@ interface ScheduleData {
 
 const overlaps = (a: Appointment, b: Appointment) => a.start_at < b.end_at && b.start_at < a.end_at;
 
-export default function SchedulePage() {
+function ScheduleView() {
   const membership = useMembership();
   const tz = membership?.timezone ?? "UTC";
   const [view, setView] = useState<"day" | "week">("week");
@@ -142,5 +143,13 @@ export default function SchedulePage() {
         </Card>
       ) : null}
     </>
+  );
+}
+
+export default function SchedulePage() {
+  return (
+    <AuthGuard roles={["ADMIN", "DISPATCHER", "TECHNICIAN"]}>
+      <ScheduleView />
+    </AuthGuard>
   );
 }

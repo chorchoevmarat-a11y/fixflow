@@ -30,6 +30,7 @@ from app.models.models import (
 from app.services.common import iso, request_ref
 
 MIN_APPOINTMENT = timedelta(minutes=30)
+MAX_SCHEDULE_HORIZON = timedelta(days=730)
 
 
 def validate_slot(start_at: datetime, end_at: datetime, now: datetime) -> None:
@@ -42,6 +43,10 @@ def validate_slot(start_at: datetime, end_at: datetime, now: datetime) -> None:
         raise Unprocessable("Appointment must last at least 30 minutes.", code="SLOT_TOO_SHORT")
     if start_at < now:
         raise Unprocessable("Appointment cannot start in the past.", code="SLOT_IN_PAST")
+    # Far-future instants (e.g. year 9999) overflow calendar arithmetic downstream (500) and are
+    # never a real appointment.
+    if end_at > now + MAX_SCHEDULE_HORIZON:
+        raise Unprocessable("Appointment must be within the next two years.", code="SLOT_TOO_FAR")
 
 
 def _merge(intervals: list[tuple[time, time]]) -> list[tuple[time, time]]:
