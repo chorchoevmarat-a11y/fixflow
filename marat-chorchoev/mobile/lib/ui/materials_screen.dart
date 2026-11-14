@@ -20,7 +20,15 @@ class MaterialsScreen extends ConsumerStatefulWidget {
 class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
   List<InventoryItem>? _items;
   ApiException? _loadError;
-  InventoryItem? _selected;
+  String? _selectedId;
+
+  InventoryItem? get _selected {
+    for (final i in _items ?? const <InventoryItem>[]) {
+      if (i.id == _selectedId) return i;
+    }
+    return null;
+  }
+
   final _qty = TextEditingController(text: '1');
   String _commandId = newCommandId('mat');
   bool _busy = false;
@@ -91,19 +99,20 @@ class _MaterialsScreenState extends ConsumerState<MaterialsScreen> {
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    DropdownButtonFormField<InventoryItem>(
-                      initialValue: _selected,
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(_selectedId),
+                      initialValue: _selected?.id,
                       isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Item'),
                       items: [
                         for (final i in items)
                           DropdownMenuItem(
-                              value: i,
+                              value: i.id,
                               child: Text(
                                   '${i.code} — ${i.name} (${i.stock} ${i.unit})',
                                   overflow: TextOverflow.ellipsis)),
                       ],
-                      onChanged: (v) => setState(() => _selected = v),
+                      onChanged: (v) => setState(() => _selectedId = v),
                     ),
                     TextField(
                       controller: _qty,
