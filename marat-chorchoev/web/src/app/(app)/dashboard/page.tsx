@@ -6,7 +6,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import { SlaBadge, StatusBadge } from "@/components/badges";
 import { DailyChart, DistributionChart, type DailyPoint } from "@/components/charts";
 import { Card, Empty, ErrorNote, PageHeader, SelectField, Spinner, TextField } from "@/components/ui";
-import { fmtDateTime, fmtMoney, minutesToText, titleCase } from "@/lib/format";
+import { fmtDateTime, fmtMoney, minutesToText, statusLabel, titleCase } from "@/lib/format";
 import { useApiQuery } from "@/lib/hooks";
 import { useMembership } from "@/lib/session";
 import type { Category, Page, RequestRow, Technician } from "@/lib/types";
@@ -126,11 +126,11 @@ function DashboardView() {
             </Card>
           </div>
 
-          <Card title="Requests by status (all time)">
+          <Card title="Reports by status (all time)">
             <div className="row">
               {STATUS_ORDER.map((s) => (
                 <Link key={s} href={`/requests?status=${s}`} className="badge" style={{ textDecoration: "none", color: "inherit" }}>
-                  {titleCase(s)} <strong>{d.status_counts[s] ?? 0}</strong>
+                  {statusLabel(s)} <strong>{d.status_counts[s] ?? 0}</strong>
                 </Link>
               ))}
             </div>

@@ -56,7 +56,7 @@ function AssetView({ id }: { id: string }) {
                 <ConfirmButton
                   label="Retire asset"
                   title="Retire this asset?"
-                  message="History is kept, but no new maintenance plans or requests can use it."
+                  message="History is kept, but no new maintenance plans or reports can use it."
                   onConfirm={() => setStatus.mutate("RETIRED")}
                 />
               </>

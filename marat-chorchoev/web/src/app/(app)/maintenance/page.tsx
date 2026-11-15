@@ -122,12 +122,12 @@ function MaintenanceView() {
   const plans = useApiQuery<Page<Plan>>("/maintenance-plans", { page, page_size: 10 });
   const toggle = useAction((p: Plan) => api.patch(`/maintenance-plans/${p.id}`, { is_enabled: !p.is_enabled }), { success: "Plan updated." });
   const generate = useAction(() => api.post<{ generated_count: number }>("/maintenance-plans/generate", { as_of: asOf }), {
-    onSuccess: (r) => setResult(`${r.generated_count} request(s) generated up to ${asOf}.`),
+    onSuccess: (r) => setResult(`${r.generated_count} report(s) generated up to ${asOf}.`),
   });
   return (
     <>
       <PageHeader title="Preventive maintenance" actions={<Button onClick={() => setOpen(true)}>New plan</Button>} />
-      <Card title="Generate due requests">
+      <Card title="Generate due reports">
         <div className="row">
           <TextField label="As of date" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
           <Button loading={generate.isPending} onClick={() => generate.mutate(undefined)} style={{ alignSelf: "end" }}>

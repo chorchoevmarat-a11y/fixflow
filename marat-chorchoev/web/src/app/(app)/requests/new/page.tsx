@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/ui";
 export default function NewRequestPage() {
   return (
     <AuthGuard roles={["REQUESTER", "DISPATCHER", "ADMIN"]}>
-      <PageHeader title="New service request" subtitle="Describe the problem; a dispatcher will triage and schedule it." />
+      <PageHeader title="New service report" subtitle="Describe the problem; a dispatcher will accept and schedule it." />
       <RequestForm />
     </AuthGuard>
   );

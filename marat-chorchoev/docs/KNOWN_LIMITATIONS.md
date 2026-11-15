@@ -4,7 +4,7 @@ This document is deliberately blunt. Nothing listed under "Not done" or "Not ver
 
 ## Not done
 
-* **Demo video** (README-03/04/05) is not recorded or published; the README carries a placeholder, not a link.
+* **Demo video** (README-03/04/05) is published: https://youtu.be/DweXMx8fYlk. It was recorded from the running system; anything not shown in it (see the lists below) is still unverified.
 * **Submission mechanics** (shared repository, `submission/<name>` branch, PR) are not done.
 * Technician **push/system notifications** on Android: the inbox is fetched when the screen opens and pull-to-refresh;
   there is no background polling, FCM, or SSE on the phone.

@@ -8,6 +8,13 @@ import { useAction, useApiQuery } from "@/lib/hooks";
 import { validateRequestForm, type Errors } from "@/lib/validation";
 import type { AssetItem, Category, Page, PropertyItem, RequestDetail } from "@/lib/types";
 
+/** Current local time in the format a datetime-local input expects (YYYY-MM-DDTHH:mm). */
+function nowLocal(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
 /** Request intake form: client validation mirrors the server, which stays authoritative. */
 export function RequestForm() {
   const router = useRouter();
@@ -40,7 +47,7 @@ export function RequestForm() {
         preferred_end_at: prefEnd ? new Date(prefEnd).toISOString() : null,
       };
       const created = await api.post<RequestDetail>("/requests", body, { "Idempotency-Key": key.current });
-      // An identical open request already existed: do not attach the photos a second time.
+      // An identical open report already existed: do not attach the photos a second time.
       if (created.deduplicated) return created;
       for (const file of files) {
         const form = new FormData();
@@ -56,8 +63,8 @@ export function RequestForm() {
         toast(
           "success",
           created.deduplicated
-            ? "You already have an identical open request. Showing it instead of creating another."
-            : "Request submitted.",
+            ? "You already have an identical open report. Showing it instead of creating another."
+            : "Report submitted.",
         );
         router.push(`/requests/${created.id}`);
       },
@@ -141,8 +148,8 @@ export function RequestForm() {
       </Card>
       <Card title="Preferred visit and photos (optional)">
         <div className="grid cols-2">
-          <TextField label="Preferred from" type="datetime-local" value={prefStart} onChange={(e) => setPrefStart(e.target.value)} error={err("preferred_start_at")} />
-          <TextField label="Preferred until" type="datetime-local" value={prefEnd} onChange={(e) => setPrefEnd(e.target.value)} error={err("preferred_end_at")} />
+          <TextField label="Preferred from" type="datetime-local" min={nowLocal()} value={prefStart} onChange={(e) => setPrefStart(e.target.value)} error={err("preferred_start_at")} />
+          <TextField label="Preferred until" type="datetime-local" min={prefStart && prefStart > nowLocal() ? prefStart : nowLocal()} value={prefEnd} onChange={(e) => setPrefEnd(e.target.value)} error={err("preferred_end_at")} />
         </div>
         <div className="field" style={{ marginTop: "0.75rem" }}>
           <label htmlFor="intake-images">Photos (up to 3)</label>
@@ -159,10 +166,10 @@ export function RequestForm() {
       {create.error && !(create.error instanceof ApiError && create.error.status === 422 && Object.keys(serverErrors).length) ? (
         <ErrorNote error={create.error} />
       ) : null}
-      {create.isError && files.length ? <Notice kind="warn">If the request was created but a photo failed, open it from your list and add photos there.</Notice> : null}
+      {create.isError && files.length ? <Notice kind="warn">If the report was created but a photo failed, open it from your list and add photos there.</Notice> : null}
       <div className="row end">
         <Button type="submit" loading={create.isPending}>
-          Submit request
+          Submit report
         </Button>
       </div>
     </form>

@@ -47,7 +47,7 @@ phone back in). The Docker stack's database is separate and nearly clean — it 
 
 **Do next, in this order:** (1) reset the dev data (or pick the Docker stack) → (2) walk the remaining phone flows
 on the fresh seed (Accept/Start/Complete, photos, offline photo, reassignment while offline) → (3) record the demo
-video and replace the README placeholder → (4) submission mechanics. Details and the longer wish-list are in "What
+video (published: https://youtu.be/DweXMx8fYlk; re-record only if the demo data changes) → (4) submission mechanics. Details and the longer wish-list are in "What
 is left to do" below.
 
 ## What the project is
@@ -130,8 +130,8 @@ checks everywhere, production web build, smoke test against a 2-worker server. N
 ## What is left to do
 
 Must do before the deadline
-1. **Reset the demo data, then record and publish the ~5 minute YouTube demo**, and put the real URL at the top
-   of `README.md` (it currently holds a placeholder). Manual testing leaves clutter (canceled probe requests,
+1. **Demo video: published** at https://youtu.be/DweXMx8fYlk (linked at the top of `README.md`, in its feature
+   table, in `docs/AI_USAGE.md` and in `docs/KNOWN_LIMITATIONS.md`). Only re-record if the demo data changes. Manual testing leaves clutter (canceled probe requests,
    test notes, generated maintenance requests), so first run
    `cd backend && uv run python -m app.cli reset-db --yes-destroy-local-data` (restart the API afterwards).
    The video must show web request creation, dispatcher assignment, the Android app, a backend-driven update,

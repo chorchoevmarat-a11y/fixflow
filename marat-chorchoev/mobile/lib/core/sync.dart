@@ -198,7 +198,7 @@ class SyncService {
         return 'This job was reassigned or unassigned while you were offline. '
             'Your note was not published to the new assignment.';
       case 'REQUEST_CLOSED':
-        return 'This request was closed or canceled while you were offline.';
+        return 'This job was closed or canceled while you were offline.';
       case 'REQUEST_NOT_FOUND':
       case 'NOT_FOUND':
         return 'You no longer have access to this job.';

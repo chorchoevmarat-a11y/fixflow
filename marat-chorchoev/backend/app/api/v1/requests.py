@@ -273,6 +273,19 @@ async def create_request(
     existing = await _find_identical_open_request(db, ctx, body)
     if existing is not None:
         # Spam guard: the same person re-sending the same open request gets the original back.
+        # No second record exists, so the link to the repeat is kept as an audit entry on the
+        # original (REQ-03): staff see when and by whom it was re-sent.
+        audit(
+            db,
+            org_id=ctx.org_id,
+            actor_id=ctx.user.id,
+            action="request.duplicate_submission_merged",
+            target_type="service_request",
+            target_id=existing.id,
+            request_id=existing.id,
+            summary=f"Identical request re-submitted and merged into {request_ref(existing.number)}",
+            is_public=False,
+        )
         result = {**await svc.detail(db, ctx, existing), "deduplicated": True}
         await idempotency.finish(db, ctx, "request.create", idempotency_key, 200, result)
         await db.commit()

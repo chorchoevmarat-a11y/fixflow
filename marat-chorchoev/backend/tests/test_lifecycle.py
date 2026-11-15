@@ -392,6 +392,12 @@ async def test_identical_open_request_is_not_created_twice(world: World) -> None
     assert again.json()["id"] == first["id"] and again.json()["deduplicated"] is True
     listing = await world.ok(a.dispatcher, "GET", "/requests", params={"q": "noise"})
     assert listing["total"] == 1
+    # The merged re-send stays traceable on the original (REQ-03).
+    async with SessionLocal() as db:
+        merged = await db.scalar(
+            select(func.count()).where(AuditEvent.action == "request.duplicate_submission_merged")
+        )
+    assert merged == 1
     # A different wording is still a new request.
     other = await create_request(world, a, title="Air handler noise is worse now")
     assert other["id"] != first["id"]
@@ -419,7 +425,9 @@ async def test_same_text_with_a_different_priority_is_a_new_request(world: World
 async def test_simultaneous_identical_submissions_create_one_request(world: World) -> None:
     a = world.a
     body = request_body(a, title="Simultaneous double click probe")
-    responses = await asyncio.gather(*(world.post(a.requester, "/requests", body) for _ in range(5)))
+    responses = await asyncio.gather(
+        *(world.post(a.requester, "/requests", body) for _ in range(5))
+    )
     assert sorted(r.status_code for r in responses) == [200, 200, 200, 200, 201]
     assert len({r.json()["id"] for r in responses}) == 1
 

@@ -11,7 +11,7 @@ function Content() {
   const membership = useMembership();
   const search = useSearchParams();
   const canCreate = membership?.role !== "TECHNICIAN";
-  const title = membership?.role === "REQUESTER" ? "My requests" : membership?.role === "TECHNICIAN" ? "My assigned jobs" : "Request queue";
+  const title = membership?.role === "REQUESTER" ? "My reports" : membership?.role === "TECHNICIAN" ? "My assigned jobs" : "Report queue";
   return (
     <>
       <PageHeader

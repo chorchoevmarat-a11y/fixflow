@@ -11,8 +11,8 @@ const STAFF: Role[] = ["ADMIN", "DISPATCHER"];
 
 export const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", roles: STAFF, group: "Operations" },
-  { href: "/requests", label: "Requests", roles: ["REQUESTER", "DISPATCHER", "ADMIN", "TECHNICIAN"] },
-  { href: "/requests/new", label: "New request", roles: ["REQUESTER", "DISPATCHER", "ADMIN"] },
+  { href: "/requests", label: "Reports", roles: ["REQUESTER", "DISPATCHER", "ADMIN", "TECHNICIAN"] },
+  { href: "/requests/new", label: "New report", roles: ["REQUESTER", "DISPATCHER", "ADMIN"] },
   { href: "/schedule", label: "Schedule", roles: [...STAFF, "TECHNICIAN"] },
   { href: "/properties", label: "Properties & assets", roles: STAFF },
   { href: "/maintenance", label: "Maintenance plans", roles: STAFF },

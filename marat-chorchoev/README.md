@@ -1,7 +1,6 @@
 # FixFlow — field service operations platform
 
-> **Demo video:** _not published yet._ The YouTube link goes here before the deadline (README-03).
-> This line is a deliberate placeholder, not a link.
+> **Demo video:** https://youtu.be/DweXMx8fYlk
 
 FixFlow serves requesters, dispatchers, organization admins and technicians of several independent
 service organizations from one product: a Python/PostgreSQL backend, a Next.js web app and a Flutter
@@ -24,7 +23,7 @@ Android app that all use the same live records.
 | **Original feature: Smart slot finder** (see `docs/PRODUCT_DECISIONS.md`) | Implemented, tested |
 | Android app: sign-in, jobs, detail, notes + photos offline queue, conflicts, materials, availability, inbox | Implemented; 32 automated tests; **run on one physical phone** (sign-in/out, jobs, offline note queue); photo flows and job state changes **not yet walked through on a device** |
 | Docker Compose stack | Implemented; **run on 13 Nov 2026**: both images build, the stack starts and seeds, `scripts/smoke.sh` passes against it, data and uploads survive a restart and a `down`/`up` (on alternate ports; see `docs/VERIFICATION.md`) |
-| Demo video | **Not done** |
+| Demo video | Published on YouTube: https://youtu.be/DweXMx8fYlk |
 
 Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
@@ -199,7 +198,7 @@ What was actually run and what passed is recorded honestly in [`docs/VERIFICATIO
 * [Product decisions](docs/PRODUCT_DECISIONS.md) — the original feature and trade-offs
 * [Known limitations](docs/KNOWN_LIMITATIONS.md) — incomplete items, risks, mitigations
 * [Verification](docs/VERIFICATION.md) — commands run and observed results
-* [AI usage](docs/AI_USAGE.md)
+* [AI usage](docs/AI_USAGE.md) — Claude Code was the main coding assistant; Gemini Flash was used for several tests and for code-structure/architecture explanations
 
 ## Repository layout
 

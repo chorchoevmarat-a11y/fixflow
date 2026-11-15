@@ -5,6 +5,10 @@
 * **Claude Code** (Anthropic's coding agent, desktop app) was used throughout: reading the specification,
   comparing it with an earlier draft of this repository, rewriting the backend, web and mobile code, writing the
   tests, scripts and documentation, and running the toolchains.
+* **Gemini Flash** (Google) was used for several tests and for explanations of the code structure and architecture
+  (to understand and cross-check the layout of the backend, web and mobile code). Its output was reviewed and run like
+  any other AI-written code (see below).
+* Demo video: https://youtu.be/DweXMx8fYlk
 * No other generative tools were used. Library code comes from open-source packages listed in each
   component's lockfile (`backend/uv.lock`, `web/bun.lock`, `mobile/pubspec.lock`).
 

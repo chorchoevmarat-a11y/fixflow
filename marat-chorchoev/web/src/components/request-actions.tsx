@@ -13,9 +13,9 @@ export function RequestActions({ request }: { request: RequestDetail }) {
   const allowed = new Set(request.allowed_actions);
   const post = (path: string, body: unknown = {}) => api.post(`/requests/${id}/${path}`, body);
 
-  const triage = useAction((notes: string) => post("triage", { triage_notes: notes || null }), { success: "Request triaged." });
-  const cancel = useAction((reason: string) => post("cancel", { reason: reason || null }), { success: "Request canceled." });
-  const close = useAction((reason: string) => post("close", { reason: reason || null }), { success: "Request closed." });
+  const triage = useAction((notes: string) => post("triage", { triage_notes: notes || null }), { success: "Report accepted for dispatch." });
+  const cancel = useAction((reason: string) => post("cancel", { reason: reason || null }), { success: "Report canceled." });
+  const close = useAction((reason: string) => post("close", { reason: reason || null }), { success: "Report closed." });
   const reopen = useAction((reason: string) => post("reopen", { reason }), { success: "Rework requested." });
   const accept = useAction(() => post("accept"), { success: "Job accepted." });
   const decline = useAction((reason: string) => post("decline", { reason }), { success: "Job declined." });
@@ -27,7 +27,7 @@ export function RequestActions({ request }: { request: RequestDetail }) {
   if (request.allowed_actions.length === 0) {
     return (
       <Notice>
-        No actions are available while this request is {request.status.replace("_", " ").toLowerCase()}.
+        No actions are available while this report is {request.status.replace("_", " ").toLowerCase()}.
       </Notice>
     );
   }
@@ -38,10 +38,10 @@ export function RequestActions({ request }: { request: RequestDetail }) {
         {request.start_blocked_reason ? <Notice kind="warn">Work cannot start yet: {request.start_blocked_reason}</Notice> : null}
         {allowed.has("triage") ? (
           <div className="stack">
-            <TextArea label="Triage notes (optional)" value={triageNotes} onChange={(e) => setTriageNotes(e.target.value)} rows={2} />
+            <TextArea label="Dispatch notes (optional)" value={triageNotes} onChange={(e) => setTriageNotes(e.target.value)} rows={2} />
             <div>
               <Button loading={triage.isPending} onClick={() => triage.mutate(triageNotes)}>
-                Mark as triaged
+                Accept for dispatch
               </Button>
             </div>
           </div>
@@ -66,7 +66,7 @@ export function RequestActions({ request }: { request: RequestDetail }) {
             <ConfirmButton
               label="Decline job"
               title="Decline this job?"
-              message="The request returns to triage and the appointment is released."
+              message="The request returns to the dispatch queue and the appointment is released."
               needsReason
               onConfirm={(r) => decline.mutate(r)}
               loading={decline.isPending}
@@ -76,7 +76,7 @@ export function RequestActions({ request }: { request: RequestDetail }) {
             <ConfirmButton
               label="Unassign technician"
               title="Unassign the technician?"
-              message="The request returns to triage. The previous assignment stays in the history."
+              message="The request returns to the dispatch queue. The previous assignment stays in the history."
               needsReason
               variant="secondary"
               onConfirm={(r) => unassign.mutate(r)}
@@ -85,10 +85,10 @@ export function RequestActions({ request }: { request: RequestDetail }) {
           ) : null}
           {allowed.has("close") ? (
             <ConfirmButton
-              label={request.allowed_actions.includes("reopen") ? "Accept work and close" : "Close request"}
-              title="Close this request?"
+              label={request.allowed_actions.includes("reopen") ? "Accept work and close" : "Close report"}
+              title="Close this report?"
               message="Closing is final."
-              confirmLabel="Close request"
+              confirmLabel="Close report"
               variant="primary"
               needsReason={!allowed.has("reopen")}
               onConfirm={(r) => close.mutate(r)}
@@ -108,9 +108,9 @@ export function RequestActions({ request }: { request: RequestDetail }) {
           ) : null}
           {allowed.has("cancel") ? (
             <ConfirmButton
-              label="Cancel request"
-              title="Cancel this request?"
-              message="Canceled requests cannot be reopened."
+              label="Cancel report"
+              title="Cancel this report?"
+              message="Canceled reports cannot be reopened."
               needsReason={request.allowed_actions.includes("triage") || request.allowed_actions.includes("assign") || request.allowed_actions.includes("reschedule")}
               onConfirm={(r) => cancel.mutate(r)}
               loading={cancel.isPending}
@@ -344,8 +344,8 @@ export function ReclassifyCard({ request }: { request: RequestDetail }) {
         ) : (
           <div className="row">
             <div className="field" style={{ flex: 1 }}>
-              <label htmlFor="dup">Related request ID (UUID from its page URL)</label>
-              <input id="dup" value={duplicate} onChange={(e) => setDuplicate(e.target.value.trim())} placeholder="Paste a request id" />
+              <label htmlFor="dup">Related report ID (UUID from its page URL)</label>
+              <input id="dup" value={duplicate} onChange={(e) => setDuplicate(e.target.value.trim())} placeholder="Paste a report id" />
             </div>
             <Button variant="secondary" disabled={duplicate.length < 32} loading={link.isPending} onClick={() => link.mutate(duplicate)} style={{ alignSelf: "end" }}>
               Mark duplicate

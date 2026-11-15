@@ -51,7 +51,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
           </Link>
         }
       />
-      {r.status === "REOPENED" ? <Notice kind="warn">The requester asked for rework. A dispatcher must triage it again.</Notice> : null}
+      {r.status === "REOPENED" ? <Notice kind="warn">The requester asked for rework. A dispatcher must accept it for dispatch again.</Notice> : null}
       {r.sla.state === "OVERDUE" && !r.sla.stopped_at ? <Notice kind="warn">This request is past its SLA due time.</Notice> : null}
       <div className="split">
         <div className="stack">
@@ -136,7 +136,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
               ) : null}
               {staff && r.triage_notes ? (
                 <>
-                  <dt>Triage notes</dt>
+                  <dt>Dispatch notes</dt>
                   <dd>{r.triage_notes}</dd>
                 </>
               ) : null}

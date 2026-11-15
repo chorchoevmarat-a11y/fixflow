@@ -79,7 +79,7 @@ describe("request list search and filters", () => {
     renderWithProviders(<RequestList />);
     await screen.findAllByText("Boiler pressure drops");
     await userEvent.selectOptions(screen.getByLabelText("Priority"), "NORMAL");
-    expect(await screen.findByText("No requests match")).toBeInTheDocument();
+    expect(await screen.findByText("No reports match")).toBeInTheDocument();
     const last = calls.filter((c) => c.url.pathname.endsWith("/requests")).at(-1);
     expect(last?.url.searchParams.get("priority")).toBe("NORMAL");
   });

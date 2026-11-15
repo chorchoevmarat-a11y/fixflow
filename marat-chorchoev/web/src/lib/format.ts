@@ -69,6 +69,11 @@ export function minutesToText(min: number): string {
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** Display name of a request status; TRIAGED is shown as "Ready to dispatch" (the API value is unchanged). */
+export function statusLabel(status: string): string {
+  return status === "TRIAGED" ? "Ready to dispatch" : titleCase(status);
+}
+
 export function titleCase(value: string): string {
   return value.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }

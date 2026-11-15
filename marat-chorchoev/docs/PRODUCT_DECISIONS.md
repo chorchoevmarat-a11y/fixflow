@@ -65,7 +65,8 @@ time instead, plus later alternatives.
    advisory lock so they also collapse into one) as one of
    their own requests that is still open (anything except COMPLETED, CLOSED or CANCELED), the API returns that
    original request with `200` and `"deduplicated": true` instead of creating a new one, so dispatchers see a
-   single entry rather than a pile of repeats from double-sends, impatient re-submits or retries. Once the
+   single entry rather than a pile of repeats (each merged re-send is recorded as a staff-only audit entry on the
+   original, so REQ-03's "retain a link to the related request" still holds) from double-sends, impatient re-submits or retries. Once the
    original is finished or canceled, the same text can be filed again. Cost: a requester cannot deliberately
    file the exact same text twice while the first is open (they should reword it or add detail); near-identical
    wording from different people is still handled by the dispatcher's manual "duplicate" link.

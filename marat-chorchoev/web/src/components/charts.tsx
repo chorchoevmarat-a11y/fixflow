@@ -33,15 +33,15 @@ export function DailyChart({ series, unit, range }: { series: DailyPoint[]; unit
       <div className="legend">
         <span>
           <span className="swatch" style={{ background: "var(--primary)" }} />
-          New requests
+          New reports
         </span>
         <span>
           <span className="swatch" style={{ background: "var(--ok)" }} />
-          Completed requests
+          Completed reports
         </span>
       </div>
       <table className="sr-only">
-        <caption>Daily requests ({unit})</caption>
+        <caption>Daily reports ({unit})</caption>
         <thead>
           <tr>
             <th>Date</th>

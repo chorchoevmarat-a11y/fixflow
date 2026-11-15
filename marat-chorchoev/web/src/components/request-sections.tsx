@@ -144,7 +144,7 @@ export function NotesCard({ request }: { request: RequestDetail }) {
             <div className="row between">
               {canInternal ? (
                 <SelectField label="Visible to" value={visibility} onChange={(e) => setVisibility(e.target.value)}>
-                  <option value="PUBLIC">Everyone on this request</option>
+                  <option value="PUBLIC">Everyone on this report</option>
                   <option value="INTERNAL">Staff and technicians only</option>
                 </SelectField>
               ) : (

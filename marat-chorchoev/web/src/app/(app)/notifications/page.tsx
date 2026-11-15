@@ -48,7 +48,7 @@ export default function NotificationsPage() {
               <div className="row">
                 {n.request_id ? (
                   <Link className="btn btn-secondary btn-sm" href={`/requests/${n.request_id}`} onClick={() => !n.read_at && read.mutate(n.id)}>
-                    Open request
+                    Open report
                   </Link>
                 ) : null}
                 {!n.read_at ? (

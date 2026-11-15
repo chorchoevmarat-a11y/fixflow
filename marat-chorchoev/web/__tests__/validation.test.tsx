@@ -66,7 +66,7 @@ describe("request form", () => {
       (url) => (url.pathname.endsWith("/properties") ? { body: emptyPage } : undefined),
     );
     renderWithProviders(<RequestForm />);
-    await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit report/i }));
 
     expect(await screen.findByText("Title is required.")).toBeInTheDocument();
     expect(screen.getByText("Description is required.")).toBeInTheDocument();
@@ -83,10 +83,10 @@ describe("request form", () => {
     );
     renderWithProviders(<RequestForm />);
     await userEvent.type(screen.getByLabelText("Title"), "Hi");
-    await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit report/i }));
     expect(await screen.findByText(/at least 5 characters/)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Title"), " there, boiler");
-    await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit report/i }));
     await waitFor(() => expect(screen.queryByText(/Title must be/)).not.toBeInTheDocument());
   });
 });

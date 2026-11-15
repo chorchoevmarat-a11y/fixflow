@@ -48,7 +48,7 @@ function PropertyForm({ existing, onDone }: { existing?: PropertyItem; onDone: (
       <TextField label="Address" value={address} onChange={(e) => setAddress(e.target.value)} error={errors.address ?? server.address} />
       <TextField label="Contact instructions (optional)" value={instructions} onChange={(e) => setInstructions(e.target.value)} />
       <fieldset className="field">
-        <legend>Who can file requests for this property?</legend>
+        <legend>Who can file reports for this property?</legend>
         <label>
           <input type="radio" name="access" checked={shared} onChange={() => setShared(true)} /> All requesters in the organization
         </label>

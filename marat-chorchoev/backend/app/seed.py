@@ -320,7 +320,15 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
             None,
             AssetStatus.ACTIVE,
         ),
-        ("boiler1", "su_medical", "BLR-001", "Gas boiler", "Heating", "VS-10422", AssetStatus.ACTIVE),
+        (
+            "boiler1",
+            "su_medical",
+            "BLR-001",
+            "Gas boiler",
+            "Heating",
+            "VS-10422",
+            AssetStatus.ACTIVE,
+        ),
         (
             "pump1",
             "su_medical",
@@ -330,7 +338,15 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
             "GF-7781",
             AssetStatus.OUT_OF_SERVICE,
         ),
-        ("chiller1", "su_canteen", "CHL-001", "Water chiller", "HVAC", "CR-30019", AssetStatus.ACTIVE),
+        (
+            "chiller1",
+            "su_canteen",
+            "CHL-001",
+            "Water chiller",
+            "HVAC",
+            "CR-30019",
+            AssetStatus.ACTIVE,
+        ),
         (
             "gen1",
             "su_clinic",
@@ -340,7 +356,15 @@ ASSETS: dict[str, list[tuple[str, str, str, str, str, str | None, AssetStatus]]]
             "CT-90455",
             AssetStatus.ACTIVE,
         ),
-        ("ac1", "su_library", "SPL-001", "Split AC, reading hall", "HVAC", None, AssetStatus.ACTIVE),
+        (
+            "ac1",
+            "su_library",
+            "SPL-001",
+            "Split AC, reading hall",
+            "HVAC",
+            None,
+            AssetStatus.ACTIVE,
+        ),
         ("dock1", "su_depot", "DCK-001", "Loading dock door", "Doors", None, AssetStatus.ACTIVE),
         (
             "oldboiler",
@@ -477,7 +501,13 @@ ISSUES_A: list[tuple[str, str, str | None, str, str]] = [
     ("Projector mount is loose in room 204", "general", None, "ait_main", "LOW"),
     ("Water leak in the AIT second-floor restroom", "plumbing", None, "ait_main", "NORMAL"),
     # College campus
-    ("College boiler pressure keeps dropping", "plumbing", "college_boiler", "college_main", "HIGH"),
+    (
+        "College boiler pressure keeps dropping",
+        "plumbing",
+        "college_boiler",
+        "college_main",
+        "HIGH",
+    ),
     ("Workshop extraction fan is very loud", "hvac", "college_fan", "college_workshop", "NORMAL"),
 ]
 
@@ -1193,7 +1223,9 @@ async def run() -> None:
             world_a = OrgWorld(
                 key="a",
                 dispatcher=actor("dispatcher@salymbekov.example.com", "a"),
-                requesters=[actor(f"requester{i}@salymbekov.example.com", "a") for i in (1, 2, 3, 4)],
+                requesters=[
+                    actor(f"requester{i}@salymbekov.example.com", "a") for i in (1, 2, 3, 4)
+                ],
                 technicians={
                     e: actor(e, "a") for e in TECH_SKILLS if e.endswith("@salymbekov.example.com")
                 },
@@ -1207,7 +1239,9 @@ async def run() -> None:
                     actor("multi@salymbekov.example.com", "b"),
                 ],
                 technicians={
-                    e: actor(e, "b") for e in TECH_SKILLS if e.endswith("@salymbekov-hospital.example.com")
+                    e: actor(e, "b")
+                    for e in TECH_SKILLS
+                    if e.endswith("@salymbekov-hospital.example.com")
                 },
             )
             # Reserved for the collision-candidate demo below.

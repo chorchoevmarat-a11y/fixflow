@@ -55,13 +55,13 @@ describe("backend-driven mutation", () => {
     );
     renderWithProviders(<Harness />);
 
-    const button = await screen.findByRole("button", { name: "Mark as triaged" });
+    const button = await screen.findByRole("button", { name: "Accept for dispatch" });
     expect(screen.getByText(/Submitted/)).toBeInTheDocument();
     await userEvent.click(button);
 
     // The status badge flips because the cache was invalidated and re-fetched.
-    await waitFor(() => expect(screen.getByText(/Triaged/)).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Mark as triaged" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Ready to dispatch/)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Accept for dispatch" })).not.toBeInTheDocument();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     expect(calls.filter((c) => c.method === "GET" && c.url.pathname.endsWith("/requests/r1")).length).toBeGreaterThanOrEqual(2);
   });
@@ -75,7 +75,7 @@ describe("backend-driven mutation", () => {
       (url) => (url.pathname.endsWith("/requests/r1") ? { body: detail("SUBMITTED", ["triage"]) } : undefined),
     );
     renderWithProviders(<Harness />);
-    await userEvent.click(await screen.findByRole("button", { name: "Mark as triaged" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept for dispatch" }));
     expect(await screen.findByText(/Cannot triage a request/)).toBeInTheDocument();
     expect(screen.getByText(/Submitted/)).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe("backend-driven mutation", () => {
       return url.pathname.endsWith("/requests/r1") ? { body: detail("SUBMITTED", ["triage"]) } : undefined;
     });
     renderWithProviders(<Harness />);
-    const button = await screen.findByRole("button", { name: "Mark as triaged" });
+    const button = await screen.findByRole("button", { name: "Accept for dispatch" });
     await userEvent.click(button);
     await waitFor(() => expect(button).toBeDisabled());
     await userEvent.click(button);

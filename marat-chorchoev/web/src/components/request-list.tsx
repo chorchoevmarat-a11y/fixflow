@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PriorityBadge, SlaBadge, StatusBadge } from "@/components/badges";
 import { Card, Empty, ErrorNote, Pagination, SelectField, Spinner, TextField } from "@/components/ui";
-import { fmtDateTime } from "@/lib/format";
+import { fmtDateTime, statusLabel } from "@/lib/format";
 import { useApiQuery } from "@/lib/hooks";
 import { isStaff, useMembership } from "@/lib/session";
 import type { Category, Page, RequestRow, Technician } from "@/lib/types";
@@ -87,7 +87,7 @@ export function RequestList({ initial }: { initial?: Partial<Filters> }) {
             <option value="">Any status</option>
             {STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s.replace("_", " ").toLowerCase()}
+                {statusLabel(s).toLowerCase()}
               </option>
             ))}
           </SelectField>
@@ -131,7 +131,7 @@ export function RequestList({ initial }: { initial?: Partial<Filters> }) {
                 <span className="sr-only">Open only</span>
                 <label className="check" style={{ marginTop: "1.6rem" }}>
                   <input type="checkbox" checked={filters.open_only} onChange={(e) => set({ open_only: e.target.checked })} />
-                  Open requests only
+                  Open reports only
                 </label>
               </div>
             </>
@@ -143,7 +143,7 @@ export function RequestList({ initial }: { initial?: Partial<Filters> }) {
         {list.isLoading ? <Spinner /> : null}
         <ErrorNote error={list.error} onRetry={() => void list.refetch()} />
         {list.data && list.data.items.length === 0 ? (
-          <Empty title="No requests match">Change the filters or search, or create a new request.</Empty>
+          <Empty title="No reports match">Change the filters or search, or create a new report.</Empty>
         ) : null}
         {list.data && list.data.items.length > 0 ? (
           <>
@@ -151,7 +151,7 @@ export function RequestList({ initial }: { initial?: Partial<Filters> }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Request</th>
+                    <th>Report</th>
                     <th>Status</th>
                     <th>Priority</th>
                     <th>Property</th>

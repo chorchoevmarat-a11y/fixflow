@@ -1,4 +1,4 @@
-import { fmtDateTime, fmtDuration, titleCase } from "@/lib/format";
+import { fmtDateTime, fmtDuration, statusLabel, titleCase } from "@/lib/format";
 import type { Priority, Sla, Status } from "@/lib/types";
 
 // Color is never the only signal: every badge also carries a glyph and a text label (WEB-06).
@@ -18,7 +18,7 @@ const STATUS_GLYPH: Record<Status, string> = {
 export function StatusBadge({ status }: { status: Status }) {
   return (
     <span className={`badge status-${status}`}>
-      <span aria-hidden="true">{STATUS_GLYPH[status]}</span> {titleCase(status)}
+      <span aria-hidden="true">{STATUS_GLYPH[status]}</span> {statusLabel(status)}
     </span>
   );
 }
