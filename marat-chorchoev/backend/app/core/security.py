@@ -1,28 +1,37 @@
-from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import secrets
 from typing import Any
 
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from argon2 import PasswordHasher
+from argon2.exceptions import Argon2Error, InvalidHashError
 
-from app.config import settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_hasher = PasswordHasher()
+# Verified against when the account does not exist, so timing does not reveal it.
+_DUMMY_HASH = _hasher.hash("fixflow-dummy-password")
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """Argon2id with the library's recommended parameters."""
+    return _hasher.hash(password)
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(password: str, password_hash: str | None) -> bool:
+    try:
+        return _hasher.verify(password_hash or _DUMMY_HASH, password) and password_hash is not None
+    except (Argon2Error, InvalidHashError):
+        return False
 
 
-def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+def new_session_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
-def decode_access_token(token: str) -> dict[str, Any]:
-    return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def payload_hash(payload: Any) -> str:
+    """Stable digest of a command payload, used to detect idempotency-key reuse."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

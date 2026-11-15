@@ -1,0 +1,13 @@
+# The image installs its own dependencies and builds from source. Copying the host's
+# node_modules (platform-specific binaries) would overwrite them and break `next build`.
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+*.log
+
+.env
+.env.*
+!.env.example
+.git/

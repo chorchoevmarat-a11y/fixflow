@@ -1,126 +1,98 @@
-# FixFlow Architecture
+# Architecture
 
-## Overview
+## Components
 
-FixFlow is a multi-tenant field-service management platform. Three independent delivery units share a Postgres database and are orchestrated by Docker Compose:
-
-```mermaid
-flowchart TD
-    subgraph Clients
-        W[Web - Next.js 15]
-        M[Mobile - Flutter 3.22]
-    end
-
-    subgraph Compose["Docker Compose (fixflow)"]
-        B[Backend - FastAPI / Python 3.12]
-        DB[(PostgreSQL 16)]
-        VOL[/uploads volume/]
-    end
-
-    W -->|REST + SSE| B
-    M -->|REST + idempotent cmds| B
-    B --> DB
-    B --> VOL
+```
+ Next.js 16 web (3000) ──HTTPS/JSON + SSE──┐
+ Flutter Android app  ──HTTPS/JSON─────────┼──►  FastAPI backend (8000, N workers)
+                                           │          │ SQLAlchemy 2 (asyncpg)
+                                           │          ├──► PostgreSQL 16  (all domain state, sessions, idempotency keys, audit)
+                                           │          ├──► uploads volume (evidence images, files named by random key)
+                                           │          └──  LISTEN/NOTIFY channel "fixflow_events" (live updates between workers)
+ Offline on the phone: JSON state file + attachment copies (unsent notes, cached jobs)
 ```
 
-## Component Boundaries
+* **Backend** (`backend/app`): `api/v1/*` routers (thin: authorization, validation, response shaping),
+  `services/*` (rules shared by several routers: request access and transitions, scheduling eligibility,
+  SLA clock, inventory consumption, maintenance generation, escalation, files, events, idempotency),
+  `models/models.py` (schema), `core/*` (auth dependencies, errors, logging, security primitives),
+  `cli.py` (operational commands), `seed.py` (deterministic demo data).
+* **Web** (`web/src`): Next.js App Router, all authenticated screens are client components using TanStack
+  Query; `lib/api.ts` (fetch + typed errors), `lib/session.ts` (per-tab session), `lib/live.ts` (SSE).
+* **Mobile** (`mobile/lib`): Riverpod providers (`core/providers.dart`), `core/sync.dart` (replay engine),
+  `core/store.dart` (persistence), screens in `ui/`.
 
-### Backend (`./backend`)
-- **Framework**: FastAPI with async SQLAlchemy 2 + asyncpg
-- **Auth**: JWT (HS256), tokens include `org_id` and `role`
-- **Queue**: ARQ (Redis-backed) for email/notification workers; in-process fallback for dev
-- **File storage**: Local volume at `/app/uploads`; served via authenticated streaming endpoint
-- **Migrations**: Alembic with async driver
+## Database and storage layout
 
-### Web (`./web`)
-- **Framework**: Next.js 15 (App Router, React 19)
-- **State**: TanStack Query v5 for server state; Zustand for UI state
-- **Auth**: HTTP-only cookie with JWT; `middleware.ts` redirects unauthenticated requests
-- **Real-time**: SSE (`/api/v1/events`) for live request / assignment updates
+* Schema is created only by Alembic (`backend/alembic/versions/0001_initial_schema.py`); nothing calls
+  `create_all`. The migration also installs a trigger that makes `audit_events` append-only.
+* 33 tables. Tenant-owned tables carry `org_id`. Money is `BIGINT` minor units, instants are `timestamptz`.
+* Evidence files: bytes in `UPLOAD_DIR/<org_id>/<random>.{jpg,png,webp}` (a Docker volume), metadata in
+  `evidence_files`. The database never stores paths supplied by users.
+* Restart safety: PostgreSQL and uploads are volumes. Sessions, idempotency keys, login attempts and the
+  SLA clock state are rows, so nothing important lives in process memory.
 
-### Mobile (`./mobile`)
-- **Framework**: Flutter 3.22
-- **State**: Riverpod 2 + AsyncNotifier
-- **Offline**: Drift (SQLite) caches jobs; `PendingCommands` table queues mutations
-- **Sync**: `SyncService` replays pending commands with idempotency keys on reconnect
+## Data flow
 
-## Database Schema Overview
+**Web.** Browser → `fetch` with `Authorization` + `X-Organization-ID` → router → service → one transaction
+(change + audit + notification + `pg_notify`) → commit → response. The web app keeps no state of its own:
+every mutation invalidates the organization's TanStack Query cache, and the SSE stream triggers the same
+invalidation when *another* user changes something. Cache keys all start with the organization id and the cache is
+cleared on organization switch and sign-out; responses carry `Cache-Control: private, no-store`.
 
-```mermaid
-erDiagram
-    Organization ||--o{ Membership : has
-    Organization ||--o{ ServiceRequest : owns
-    Organization ||--o{ Category : defines
-    User ||--o{ Membership : joins
-    User ||--o{ ServiceRequest : creates
-    User ||--o{ Assignment : receives
-    ServiceRequest ||--o{ Assignment : has
-    ServiceRequest ||--o{ Note : has
-    ServiceRequest ||--o{ EvidenceFile : has
-    ServiceRequest ||--o{ AuditEvent : logs
-    Assignment ||--o{ ScheduleBlock : occupies
-```
+**Mobile.** Jobs are fetched online and cached on the device (`state.json`). Online-only actions
+(accept, start, block, complete, materials) call the API directly and the screen changes only after the server
+accepted them. Notes and photos always go through the **queue**: saved locally first, then delivered by the
+sync engine with stable command ids (see `docs/API.md`). The engine runs when a note is saved, when the app
+opens, and when connectivity returns.
 
-Key tables:
+## Tenant isolation
 
-| Table | Purpose |
-|---|---|
-| `organizations` | Tenant root; every row keyed by `org_id` |
-| `users` | Global user accounts |
-| `memberships` | User ↔ Org with role (`REQUESTER`, `DISPATCHER`, `TECHNICIAN`, `ADMIN`) |
-| `service_requests` | Core work-order entity |
-| `assignments` | Technician allocation with schedule window |
-| `schedule_blocks` | Reserved time for conflict detection |
-| `notes` | Rich-text + attachments log |
-| `evidence_files` | Uploaded photos/docs |
-| `audit_events` | Immutable event log for every state change |
-| `categories` | Org-defined request classification |
+Defense in depth, so one forgotten filter cannot leak data:
 
-## Tenant Isolation Strategy
+1. **Context.** The bearer token identifies the user; `X-Organization-ID` selects the membership, which is
+   looked up on every request (`core/deps.py`). A foreign or unknown organization yields the same
+   `403 NOT_A_MEMBER`; deactivated members get `403 MEMBERSHIP_DEACTIVATED` immediately.
+2. **Row-level rule.** `services/requests.visibility_clause` is applied in SQL to every request lookup:
+   staff see all rows of their organization, a requester only their own, a technician only requests they are
+   (or were, for history) assigned to. Wrong org, wrong owner and nonexistent all produce the same `404`.
+3. **Database constraints.** Relations between tenant tables are *composite* foreign keys
+   `(org_id, x_id) → parent(org_id, id)`; a row can therefore not reference another organization's record even if
+   application code tried. Constraints are `DEFERRABLE INITIALLY DEFERRED` so a transaction may write rows in any
+   order but cannot commit an inconsistent state.
+4. **Per-resource ownership** for notifications (`org_id` + `recipient_id`), files (authorized through their
+   request), notes (internal visibility hidden from requesters) and data returned to technicians (no requester email).
 
-Every authenticated request carries a JWT containing `org_id`. The `get_current_membership` dependency:
+Cross-organization denial is exercised for requests, notes, activity, files, assets, inventory, notifications,
+reports, audit and the live stream (`tests/test_isolation_and_files.py`).
 
-1. Validates the JWT and extracts `user_id` + `org_id`.
-2. Looks up `Membership(user_id, org_id)` and raises `403` if absent or inactive.
-3. Injects the `Membership` object into route handlers.
+## Concurrency strategy
 
-All service-layer queries include an explicit `WHERE org_id = :org_id` filter. SQLAlchemy model base classes expose an `org_id` column; a custom `OrgScoped` mixin raises if a query omits it. Database rows are never cross-org joinable without an explicit override.
+| Invariant | Mechanism |
+| --- | --- |
+| One transition at a time per request | `SELECT … FOR UPDATE` on the request row, then re-check the current status |
+| No overlapping active assignments of a technician | (a) row lock on the technician profile serializes scheduling decisions; (b) **exclusion constraint** `ex_assignments_no_overlap` (`int8range(technician_no) && tstzrange(start,end,'[)')` where active) is the storage-level guarantee; the loser receives `409 SCHEDULE_CONFLICT` |
+| One active assignment per request; one current/draft estimate | partial unique indexes |
+| Estimate decided once | lock request → lock estimate → check `AWAITING_APPROVAL` and version |
+| Stock never negative, no double consumption | one conditional `UPDATE … WHERE stock_quantity >= :q RETURNING`; `CHECK (stock_quantity >= 0)`; unique `(org_id, client_command_id)` with a savepoint so a duplicate rolls the decrement back |
+| Maintenance generation without duplicates | `INSERT … ON CONFLICT DO NOTHING` on unique `(maintenance_plan_id, occurrence_date)` |
+| Escalate once | `UPDATE … WHERE sla_escalated_at IS NULL … RETURNING` flips the flag exactly once, even with parallel schedulers |
+| Replay safety | unique command ids / idempotency keys in PostgreSQL |
 
-## Concurrency Strategy
+Nothing relies on in-process locks, so any number of API workers is safe. The container starts 4 workers.
 
-### Schedule Conflict Prevention
-Assignments target a `(technician_id, start_time, end_time)` window. Before inserting:
+## SLA clock
 
-```sql
-SELECT id FROM schedule_blocks
-WHERE technician_id = :tid
-  AND tsrange(start_time, end_time) && tsrange(:start, :end)
-FOR UPDATE;
-```
+Business time = organization opening intervals per weekday minus holidays, in the organization's timezone.
+The request stores the budget, business seconds consumed so far, when the clock last started, and three
+derived instants (at-risk, due, overdue-from). Every start/pause/resume/priority change/calendar change appends
+a row to `sla_events` and recomputes those instants, so state can be filtered and counted in SQL
+(`sla_state_expr`) with exactly the same answer Python gives. The estimate pause, priority recalculation
+("new budget − consumed") and frozen outcome at completion all use the same functions.
 
-If any row is returned the endpoint returns `409 Conflict` with candidate alternatives from the Smart Dispatch ranking. The `FOR UPDATE` lock prevents two concurrent dispatchers from double-booking the same slot.
+## Live updates
 
-### Idempotency
-Mobile offline commands include an `idempotency_key` (UUID v4 generated on device). The backend stores processed keys in `audit_events.idempotency_key` with a unique constraint; replayed commands return the original response body from the stored result rather than re-executing.
-
-## File Storage
-
-Files are written to `/app/uploads/{org_id}/{request_id}/{uuid}.{ext}` on the Docker volume. Uploads are:
-- Size-limited to 20 MB per file (configurable via `MAX_UPLOAD_BYTES`).
-- MIME-verified with `python-magic` (checks file magic bytes, not just Content-Type header).
-- Served via `GET /api/v1/files/{file_id}` which checks membership before streaming.
-
-## SLA Calculation
-
-Each `Category` carries an optional `sla_hours` field. When a `ServiceRequest` is created:
-
-- `sla_deadline = created_at + INTERVAL sla_hours`
-- A background ARQ job runs every 5 minutes and sets `sla_breached = True` on overdue open requests, emitting an `AuditEvent` and sending dispatcher notifications.
-
-SLA status is returned on every request list/detail response so the frontend can display the traffic-light indicator.
-
-## Real-time Updates (SSE)
-
-The backend exposes `GET /api/v1/events?org_id=<id>` as a Server-Sent Events stream. On any state transition (`REQUEST_CREATED`, `ASSIGNED`, `IN_PROGRESS`, `COMPLETED`, etc.) the backend publishes a JSON event to an in-process `asyncio.Queue` keyed by `org_id`. All connected SSE clients for that org receive the event within ~100 ms.
-
-For the mobile app, the Flutter client polls `GET /api/v1/jobs/my` on foreground resume and uses `flutter_local_notifications` for push-equivalent alerts when offline.
+`services/events.publish` calls `pg_notify` inside the business transaction, so an event exists only if the
+change committed. Each worker holds one LISTEN connection and fans events out to its SSE subscribers filtered by
+organization and audience (staff, or specific user ids). A slow consumer or a lost listener connection produces a
+`resync` event; clients always refetch canonical state.

@@ -1,41 +1,40 @@
-# AI Usage & Collaboration Disclosure
+# AI usage
 
-## Overview
+## Tools
 
-This project was developed with assistance from state-of-the-art AI foundation models, primarily **Anthropic Claude 3.7 Sonnet / Claude Sonnet 4.6** and Google DeepMind systems, functioning in an agentic swarm workflow.
+* **Claude Code** (Anthropic's coding agent, desktop app) was used throughout: reading the specification,
+  comparing it with an earlier draft of this repository, rewriting the backend, web and mobile code, writing the
+  tests, scripts and documentation, and running the toolchains.
+* **Gemini Flash** (Google) was used for several tests and for explanations of the code structure and architecture
+  (to understand and cross-check the layout of the backend, web and mobile code). Its output was reviewed and run like
+  any other AI-written code (see below).
+* Demo video: https://youtu.be/DweXMx8fYlk
+* No other generative tools were used. Library code comes from open-source packages listed in each
+  component's lockfile (`backend/uv.lock`, `web/bun.lock`, `mobile/pubspec.lock`).
 
----
+## How the output was verified
 
-## AI Tools & Workflow
+AI-written code was not trusted on sight. It was accepted only after:
 
-### 1. Primary Model Architecture
-- **Model**: Claude Sonnet 4.6 / Claude 3.7 Sonnet
-- **Role**: Architecture design, schema modeling, API contract authoring, implementation of backend services, frontend web components, mobile Flutter client, automated tests, and deployment configuration.
-- **Workflow Paradigm**: Multi-agent coordinated swarm with specialized personas:
-  - `coordinator`: Orchestration, specification decomposition, peer review.
-  - `infra`: Directory scaffolding, Docker Compose orchestration, environment configuration, and core architectural documentation.
-  - `backend`: FastAPI async REST endpoints, SQLAlchemy ORM models, Alembic migrations, PostgreSQL conflict locking, and pytest suites.
-  - `web`: Next.js 15 App Router interface, Tailwind CSS layout, TanStack Query state handling, and SSE subscription.
-  - `mobile`: Flutter 3.22 mobile application, Drift offline database, queue replay manager, Riverpod state, and widget testing.
+1. **Automated checks** — backend: `ruff check`, `ruff format --check`, `ty check`, 52 `pytest` tests against a
+   real PostgreSQL built from the Alembic migrations; web: ESLint, strict `tsc`, 16 Jest tests, `next build`;
+   mobile: `flutter analyze`, `dart format`, 32 `flutter test` tests. Results are in `docs/VERIFICATION.md`.
+2. **Concurrency tests that can fail** — races (assignment, inventory, estimate decisions, duplicate commands,
+   maintenance generation, escalation) are asserted with `asyncio.gather` against PostgreSQL, so a missing lock or
+   constraint produces a red test rather than a hidden bug.
+3. **Running the real thing** — the seed replays history through the live HTTP API; `scripts/smoke.sh` ran
+   against a 2-worker server; the web app was driven in a browser against that server. Problems found this way
+   (for example a stale server missing a new endpoint, and a dashboard query that needs a timezone database)
+   were fixed.
+4. **A second, adversarial round (13 Nov 2026)** — AI-driven probing of the running system (about 400 API
+   requests, a browser pass, and a sweep of the Android app on a physical phone) found further defects that the
+   first round's tests had missed, for example the mobile **Sign out** button doing nothing because of a circular
+   provider dependency. They were fixed with regression tests where practical; the account is in
+   `docs/VERIFICATION.md`, and what that round could not cover is in `docs/KNOWN_LIMITATIONS.md`.
+5. **Review against the specification** — requirement identifiers (e.g. SCHED-03, INV-05) were mapped to code and
+   tests; items that could not be proven are listed in `docs/KNOWN_LIMITATIONS.md` rather than claimed.
 
----
+Known weak spots of AI-generated work to keep in mind when reviewing: UI copy, CSS details, and anything that
+needs a device or Docker (see "Not verified" in the limitations document).
 
-## Areas of AI Contribution
-
-| Domain | AI Contribution | Human Oversight & Validation |
-|---|---|---|
-| **System Architecture** | Multi-tenant schema design, GiST range locking strategy, SSE event broker topology | Evaluated trade-offs between SSE and WebSockets, selected database-backed locking |
-| **Backend Implementation** | FastAPI dependency injection, Pydantic v2 schemas, asyncpg session lifecycle | Reviewed SQL query generation, ensured strict `org_id` filtering on all models |
-| **Concurrency & Idempotency** | PostgreSQL `SELECT FOR UPDATE` pattern, UUIDv4 replay handling | Verified isolation levels, validated conflict response contracts (HTTP 409) |
-| **Web Frontend** | Component hierarchy, Next.js 15 routing, SSE auto-reconnect logic | Checked UI responsiveness, form validation, and accessibility standards |
-| **Mobile Client** | Drift SQLite table definitions, Riverpod state notifiers, Dio interceptor | Checked offline command queue durability and replay semantics |
-| **Verification & Documentation** | Bash test orchestrator (`verify-all.sh`), E2E smoke tests (`smoke.sh`), API specifications | Ran and verified test scripts against running local containers |
-
----
-
-## Verification & Guardrails
-
-To guarantee code quality, reliability, and security of AI-generated artifacts:
-1. **Automated Linters & Static Analysis**: Every file was subject to `ruff` (backend), `eslint` / `tsc` (web), and `flutter analyze` / `dart format` (mobile).
-2. **Automated Test Suites**: Unit and integration test suites were generated and executed for all critical business logic, specifically targeting multi-tenancy isolation and concurrency conflict handling.
-3. **No Unchecked Assumptions**: All configuration values and environment variables were centralized in `.env.example` and verified against Docker Compose definitions.
+Private prompts and chat logs are not included.

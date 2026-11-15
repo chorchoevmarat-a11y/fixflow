@@ -1,156 +1,221 @@
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Annotated
+"""Preventive maintenance plans and generation (PM-01..05)."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-from sqlalchemy import select
+import uuid
+from datetime import date
+from typing import Any
+
+from fastapi import APIRouter
+from pydantic import Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_membership
-from app.database import get_db
+from app.api.schemas import Body
+from app.core.deps import DB, Ctx, StaffCtx
+from app.core.errors import Conflict, NotFound, Unprocessable
 from app.models.models import (
+    Asset,
+    AssetStatus,
     MaintenancePlan,
-    MaintenancePlanOccurrence,
-    OrganizationMembership,
-    RecurrenceRule,
-    RequestPriority,
-    RequestStatus,
+    Priority,
+    Recurrence,
+    ServiceCategory,
     ServiceRequest,
 )
+from app.services import idempotency
+from app.services.common import PageDep, audit, count_rows, iso, page_body, request_ref
+from app.services.idempotency import IdempotencyHeader
+from app.services.maintenance import generate, next_occurrence
 
-router = APIRouter(prefix="/maintenance", tags=["maintenance"])
-
-
-class MaintenancePlanCreate(BaseModel):
-    name: str
-    description: str | None = None
-    asset_id: uuid.UUID | None = None
-    property_id: uuid.UUID | None = None
-    category_id: uuid.UUID | None = None
-    recurrence: RecurrenceRule
-    advance_days: int = 7
-    priority: RequestPriority = RequestPriority.MEDIUM
-    estimated_duration_minutes: int | None = 60
-    start_date: datetime | None = None
+router = APIRouter(prefix="/maintenance-plans", tags=["maintenance"])
 
 
-@router.get("/plans")
-async def list_plans(
-    membership: Annotated[OrganizationMembership, Depends(get_current_membership)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[dict]:
-    query = select(MaintenancePlan).where(
-        MaintenancePlan.organization_id == membership.organization_id,
-        MaintenancePlan.is_active == True,
+class PlanCreate(Body):
+    asset_id: uuid.UUID
+    category_id: uuid.UUID
+    title: str = Field(min_length=5, max_length=120)
+    description: str = Field(min_length=20, max_length=3000)
+    priority: Priority = Priority.NORMAL
+    first_date: date
+    recurrence: Recurrence
+
+
+class PlanPatch(Body):
+    title: str | None = Field(default=None, min_length=5, max_length=120)
+    description: str | None = Field(default=None, min_length=20, max_length=3000)
+    priority: Priority | None = None
+    is_enabled: bool | None = None
+
+
+class GenerateBody(Body):
+    as_of: date = Field(description="Generate every occurrence due on or before this date")
+    plan_id: uuid.UUID | None = None
+
+
+async def _view(db: AsyncSession, plan: MaintenancePlan, asset: Asset, category_name: str) -> dict:
+    generated = await db.scalar(
+        select(func.count())
+        .select_from(ServiceRequest)
+        .where(ServiceRequest.maintenance_plan_id == plan.id)
     )
-    res = await db.execute(query)
-    plans = res.scalars().all()
-    return [
-        {
-            "id": str(p.id),
-            "name": p.name,
-            "recurrence": p.recurrence.value,
-            "next_occurrence": p.next_occurrence.isoformat() if p.next_occurrence else None,
-            "asset_id": str(p.asset_id) if p.asset_id else None,
-            "is_active": p.is_active,
-        }
-        for p in plans
-    ]
-
-
-@router.post("/plans", status_code=status.HTTP_201_CREATED)
-async def create_plan(
-    payload: MaintenancePlanCreate,
-    membership: Annotated[OrganizationMembership, Depends(get_current_membership)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
-    next_occ = payload.start_date or datetime.now(timezone.utc)
-    plan = MaintenancePlan(
-        organization_id=membership.organization_id,
-        name=payload.name,
-        description=payload.description,
-        asset_id=payload.asset_id,
-        property_id=payload.property_id,
-        category_id=payload.category_id,
-        recurrence=payload.recurrence,
-        next_occurrence=next_occ,
-        advance_days=payload.advance_days,
-        priority=payload.priority,
-        estimated_duration_minutes=payload.estimated_duration_minutes,
-        start_date=payload.start_date,
-    )
-    db.add(plan)
-    await db.commit()
-    await db.refresh(plan)
-    return {"id": str(plan.id), "name": plan.name, "next_occurrence": plan.next_occurrence.isoformat()}
-
-
-@router.post("/plans/{plan_id}/generate")
-async def trigger_generation(
-    plan_id: uuid.UUID,
-    membership: Annotated[OrganizationMembership, Depends(get_current_membership)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
-    plan = await db.get(MaintenancePlan, plan_id)
-    if not plan or plan.organization_id != membership.organization_id:
-        raise HTTPException(status_code=404, detail="Maintenance plan not found")
-
-    occ_date = plan.next_occurrence or datetime.now(timezone.utc)
-
-    # Check composite unique (plan_id, occurrence_date)
-    existing = await db.execute(
-        select(MaintenancePlanOccurrence).where(
-            MaintenancePlanOccurrence.plan_id == plan.id,
-            MaintenancePlanOccurrence.occurrence_date == occ_date,
-        )
-    )
-    if existing.scalar_one_or_none():
-        return {"status": "already_generated", "occurrence_date": occ_date.isoformat()}
-
-    # Create service request
-    req_number = f"PM-{datetime.now(timezone.utc).year}-{uuid.uuid4().hex[:6].upper()}"
-    sr = ServiceRequest(
-        org_id=plan.organization_id,
-        property_id=plan.property_id,
-        asset_id=plan.asset_id,
-        category_id=plan.category_id,
-        request_number=req_number,
-        title=f"PM: {plan.name}",
-        description=plan.description,
-        priority=plan.priority,
-        status=RequestStatus.SUBMITTED,
-        source="pm",
-        scheduled_start=occ_date,
-    )
-    db.add(sr)
-    await db.flush()
-
-    occ = MaintenancePlanOccurrence(
-        plan_id=plan.id,
-        service_request_id=sr.id,
-        occurrence_date=occ_date,
-    )
-    db.add(occ)
-
-    # Calculate next occurrence
-    rec_days = {
-        RecurrenceRule.DAILY: 1,
-        RecurrenceRule.WEEKLY: 7,
-        RecurrenceRule.BIWEEKLY: 14,
-        RecurrenceRule.MONTHLY: 30,
-        RecurrenceRule.QUARTERLY: 90,
-        RecurrenceRule.SEMI_ANNUAL: 180,
-        RecurrenceRule.ANNUAL: 365,
-    }
-    days = rec_days.get(plan.recurrence, 30)
-    plan.last_generated_at = datetime.now(timezone.utc)
-    plan.next_occurrence = occ_date + timedelta(days=days)
-
-    await db.commit()
+    upcoming = await next_occurrence(db, plan) if asset.status == AssetStatus.ACTIVE else None
     return {
-        "status": "generated",
-        "service_request_id": str(sr.id),
-        "request_number": sr.request_number,
-        "next_occurrence": plan.next_occurrence.isoformat(),
+        "id": str(plan.id),
+        "title": plan.title,
+        "description": plan.description,
+        "priority": plan.priority,
+        "first_date": plan.first_date.isoformat(),
+        "recurrence": plan.recurrence,
+        "is_enabled": plan.is_enabled,
+        "asset": {
+            "id": str(asset.id),
+            "code": asset.code,
+            "name": asset.name,
+            "status": asset.status,
+        },
+        "category": {"id": str(plan.category_id), "name": category_name},
+        "next_occurrence": upcoming.isoformat() if upcoming else None,
+        "generated_count": generated or 0,
+        "created_at": iso(plan.created_at),
     }
+
+
+def _query(ctx: Ctx) -> Any:
+    return (
+        select(MaintenancePlan, Asset, ServiceCategory.name)
+        .join(Asset, Asset.id == MaintenancePlan.asset_id)
+        .join(ServiceCategory, ServiceCategory.id == MaintenancePlan.category_id)
+        .where(MaintenancePlan.org_id == ctx.org_id)
+    )
+
+
+async def _get(
+    db: AsyncSession, ctx: Ctx, plan_id: uuid.UUID
+) -> tuple[MaintenancePlan, Asset, str]:
+    row = (await db.execute(_query(ctx).where(MaintenancePlan.id == plan_id))).first()
+    if row is None:
+        raise NotFound("Maintenance plan not found.", code="PLAN_NOT_FOUND")
+    return row[0], row[1], row[2]
+
+
+@router.get("", summary="Maintenance plans with next occurrence (staff)")
+async def list_plans(ctx: StaffCtx, db: DB, page: PageDep) -> dict[str, Any]:
+    query = _query(ctx)
+    total = await count_rows(db, query)
+    rows = (
+        await db.execute(
+            query.order_by(MaintenancePlan.title, MaintenancePlan.id)
+            .offset(page.offset)
+            .limit(page.page_size)
+        )
+    ).all()
+    return page_body([await _view(db, p, a, c) for p, a, c in rows], total, page)
+
+
+@router.post("", status_code=201, summary="Create a plan for an active asset (staff)")
+async def create_plan(body: PlanCreate, ctx: StaffCtx, db: DB) -> dict[str, Any]:
+    asset = (
+        await db.execute(select(Asset).where(Asset.id == body.asset_id, Asset.org_id == ctx.org_id))
+    ).scalar_one_or_none()
+    if asset is None:
+        raise Unprocessable("Unknown asset.", code="ASSET_NOT_FOUND")
+    if asset.status != AssetStatus.ACTIVE:
+        # ASSET-04 / PM-01: plans may only be created for active assets.
+        raise Conflict(
+            f"This asset is {asset.status}; maintenance plans need an active asset.",
+            code="ASSET_NOT_ACTIVE",
+        )
+    category = (
+        await db.execute(
+            select(ServiceCategory).where(
+                ServiceCategory.id == body.category_id, ServiceCategory.org_id == ctx.org_id
+            )
+        )
+    ).scalar_one_or_none()
+    if category is None or not category.is_enabled:
+        raise Unprocessable("Unknown or disabled category.", code="CATEGORY_NOT_FOUND")
+    plan = MaintenancePlan(org_id=ctx.org_id, created_by_id=ctx.user.id, **body.model_dump())
+    db.add(plan)
+    audit(
+        db,
+        org_id=ctx.org_id,
+        actor_id=ctx.user.id,
+        action="maintenance.plan_created",
+        target_type="maintenance_plan",
+        target_id=plan.id,
+        summary=f"Maintenance plan created: {plan.title}",
+        after=body.model_dump(mode="json"),
+    )
+    await db.commit()
+    return await _view(db, plan, asset, category.name)
+
+
+@router.get("/{plan_id}", summary="Plan detail with generated request history (staff)")
+async def get_plan(plan_id: uuid.UUID, ctx: StaffCtx, db: DB) -> dict[str, Any]:
+    plan, asset, category_name = await _get(db, ctx, plan_id)
+    view = await _view(db, plan, asset, category_name)
+    history = await db.scalars(
+        select(ServiceRequest)
+        .where(ServiceRequest.maintenance_plan_id == plan.id)
+        .order_by(ServiceRequest.occurrence_date.desc())
+        .limit(50)
+    )
+    view["generated"] = [
+        {
+            "request_id": str(r.id),
+            "reference": request_ref(r.number),
+            "occurrence_date": r.occurrence_date.isoformat() if r.occurrence_date else None,
+            "status": r.status,
+            "created_at": iso(r.created_at),
+        }
+        for r in history
+    ]
+    return view
+
+
+@router.patch("/{plan_id}", summary="Edit, enable, or disable a plan (staff)")
+async def update_plan(plan_id: uuid.UUID, body: PlanPatch, ctx: StaffCtx, db: DB) -> dict[str, Any]:
+    plan, asset, category_name = await _get(db, ctx, plan_id)
+    changes = body.model_dump(exclude_none=True, mode="json")
+    if changes.get("is_enabled") and asset.status != AssetStatus.ACTIVE:
+        raise Conflict("The asset is not active.", code="ASSET_NOT_ACTIVE")
+    before = {key: getattr(plan, key) for key in changes}
+    for key, value in body.model_dump(exclude_none=True).items():
+        setattr(plan, key, value)
+    audit(
+        db,
+        org_id=ctx.org_id,
+        actor_id=ctx.user.id,
+        action="maintenance.plan_updated",
+        target_type="maintenance_plan",
+        target_id=plan.id,
+        summary=f"Maintenance plan updated: {plan.title}",
+        before=before,
+        after=changes,
+    )
+    await db.commit()
+    return await _view(db, plan, asset, category_name)
+
+
+@router.post(
+    "/generate",
+    summary="Generate due occurrences up to a date (staff; safe to repeat)",
+)
+async def generate_now(
+    body: GenerateBody, ctx: StaffCtx, db: DB, idempotency_key: IdempotencyHeader = None
+) -> Any:
+    scope = "maintenance.generate"
+    if (
+        replay := await idempotency.begin(db, ctx, scope, idempotency_key, body.model_dump())
+    ) is not None:
+        return replay
+    if body.plan_id is not None:
+        await _get(db, ctx, body.plan_id)
+    created = await generate(db, ctx.org, body.as_of, plan_id=body.plan_id, actor_id=ctx.user.id)
+    result = {
+        "as_of": body.as_of.isoformat(),
+        "generated_count": len(created),
+        "generated": created,
+    }
+    await idempotency.finish(db, ctx, scope, idempotency_key, 200, result)
+    await db.commit()
+    return result

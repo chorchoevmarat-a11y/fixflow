@@ -2,22 +2,39 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Runtime configuration. Every value can be overridden by an environment variable."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://fixflow:fixflow@localhost:5432/fixflow"
-    SECRET_KEY: str = "change-me-in-production-32chars-min"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    UPLOAD_DIR: str = "/app/uploads"
-    CORS_ORIGINS: str = "http://localhost:3000"
     ENVIRONMENT: str = "development"
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10 MiB
-    MAX_PAGE_SIZE: int = 100
+    CORS_ORIGINS: str = "http://localhost:3000"
+    UPLOAD_DIR: str = "./uploads"
+
+    SESSION_TTL_MINUTES: int = 12 * 60
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_FAILURE_WINDOW_MINUTES: int = 15
+
+    MAX_JSON_BODY_BYTES: int = 1024 * 1024
+    MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+    MAX_IMAGE_PIXELS: int = 40_000_000
+    MAX_IMAGE_SIDE: int = 10_000
+    MAX_INTAKE_IMAGES: int = 3
+
+    # Canceled requests drop out of the default request list this many minutes after cancellation.
+    # They are hidden, not deleted: history, audit trail and SLA outcome are kept (LIFE/SLA specs).
+    CANCELED_HIDE_AFTER_MINUTES: int = 5
+
     DEFAULT_PAGE_SIZE: int = 20
+    MAX_PAGE_SIZE: int = 100
 
     @property
     def cors_origins_list(self) -> list[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def is_development(self) -> bool:
+        return self.ENVIRONMENT.lower() in {"development", "dev", "test", "local"}
 
 
 settings = Settings()

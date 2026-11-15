@@ -1,250 +1,209 @@
-# FixFlow — Multi-Tenant Field Service Operations Platform
+# FixFlow — field service operations platform
 
-[![Verification](https://img.shields.io/badge/verification-passing-brightgreen)](#verification--testing)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-15.0+-black.svg?logo=next.js&logoColor=white)](https://nextjs.org)
-[![Flutter](https://img.shields.io/badge/Flutter-3.22+-02569B.svg?logo=flutter&logoColor=white)](https://flutter.dev)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+> **Demo video:** https://youtu.be/DweXMx8fYlk
 
-FixFlow is an enterprise field-service management platform orchestrating work orders, scheduling, technician dispatching, real-time tracking, and mobile field execution with robust multi-tenant data isolation and offline synchronization.
+FixFlow serves requesters, dispatchers, organization admins and technicians of several independent
+service organizations from one product: a Python/PostgreSQL backend, a Next.js web app and a Flutter
+Android app that all use the same live records.
 
----
+## Feature status
 
-## Architecture Overview
+| Area | Status |
+| --- | --- |
+| Multi-organization tenancy, 4 roles, explicit organization selection, deactivation | Implemented, tested |
+| Request lifecycle (SUBMITTED → … → CLOSED, rework, decline, block), audit per transition | Implemented, tested |
+| Scheduling: skills, availability, time off, 30-min minimum, DB-enforced no-overlap, 409 on conflict | Implemented, tested (incl. concurrent attempts) |
+| Estimates: versions, immutability, approval gate, race-safe decisions | Implemented, tested |
+| Inventory: atomic, non-negative, replay-safe consumption, price snapshot, low stock | Implemented, tested |
+| Business-time SLA, holidays, estimate pause, one-time overdue escalation, CLI | Implemented, tested |
+| Preventive maintenance with unique (plan, date) guard, CLI | Implemented, tested |
+| Notes, evidence images (validated, authorized download), notifications, activity timeline | Implemented, tested |
+| Live updates (Server-Sent Events over PostgreSQL LISTEN/NOTIFY) | Implemented; manually checked, one automated isolation check |
+| Web app (requester, dispatcher, admin workspaces, dashboard, charts, schedule board) | Implemented; 16 automated tests; browser-checked as dispatcher and requester (staff, maintenance and organization-settings screens not yet) |
+| **Original feature: Smart slot finder** (see `docs/PRODUCT_DECISIONS.md`) | Implemented, tested |
+| Android app: sign-in, jobs, detail, notes + photos offline queue, conflicts, materials, availability, inbox | Implemented; 32 automated tests; **run on one physical phone** (sign-in/out, jobs, offline note queue); photo flows and job state changes **not yet walked through on a device** |
+| Docker Compose stack | Implemented; **run on 13 Nov 2026**: both images build, the stack starts and seeds, `scripts/smoke.sh` passes against it, data and uploads survive a restart and a `down`/`up` (on alternate ports; see `docs/VERIFICATION.md`) |
+| Demo video | Published on YouTube: https://youtu.be/DweXMx8fYlk |
 
-FixFlow comprises three cohesive delivery units sharing a common PostgreSQL storage layer:
+Everything that is incomplete or unverified is listed in [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
-```mermaid
-flowchart TD
-    subgraph Clients
-        W["Web Console (Next.js 15)"]
-        M["Mobile Field App (Flutter 3.22)"]
-    end
+## Prerequisites (versions actually used)
 
-    subgraph Infrastructure["Docker Compose Network"]
-        API["FastAPI REST & SSE Service (Port 8000)"]
-        DB[("PostgreSQL 16 (Port 5432)")]
-        VOL[("Local Uploads Volume (/app/uploads)")]
-    end
+| Tool | Version used | Needed for |
+| --- | --- | --- |
+| Docker + Compose v2 | Docker 29.9.3 / Compose 5.7.0 (Docker Desktop, WSL2 backend) | one-command stack |
+| [uv](https://docs.astral.sh/uv/) | 0.11.19 | Python env (Python ≥ 3.13; tested on 3.14.5) |
+| PostgreSQL | 16 (tests ran on 16.2, later the Windows service `postgresql-x64-16`) | database |
+| [Bun](https://bun.sh) | 1.4.4 | web install/scripts |
+| Node.js | 26.13 (any 22+ works for `next`) | Next.js runtime, smoke script |
+| Flutter | 3.50.0 stable (Dart 3.14) | Android app |
+| Android SDK | platforms 35/36, build-tools 34–36, JDK 21 (Android Studio) | APK |
 
-    W -->|"REST API + SSE (/api/v1/events)"| API
-    M -->|"REST API + Idempotent Sync"| API
-    API -->|"SQLAlchemy 2.0 Async + asyncpg"| DB
-    API -->|"Authenticated Streaming"| VOL
-```
+## Quick start (Docker)
 
-- **Backend (`/backend`)**: High-performance asynchronous API built with Python 3.13, FastAPI, SQLAlchemy 2.0 (asyncpg), Alembic, and Pydantic v2.
-- **Web Frontend (`/web`)**: Modern operations dashboard built with Next.js 15 (App Router, React 19), Tailwind CSS, TanStack Query v5, and Server-Sent Events (SSE).
-- **Mobile Field App (`/mobile`)**: Offline-first mobile client built with Flutter 3.22, Riverpod 2, Drift (SQLite) local storage, and background command replay.
-- **Documentation (`/docs`)**: Full architecture, API contracts, design decisions, verification suites, and risk analyses.
-
----
-
-## Directory Structure
-
-```text
-marat-chorchoev/
-├── compose.yaml                # Production-grade multi-container orchestrator
-├── .env.example                # Canonical environment variable template
-├── README.md                   # Platform documentation and onboarding
-├── backend/                    # FastAPI backend service
-│   ├── app/                    # Application source code
-│   │   ├── api/v1/             # REST endpoints (auth, requests, assignments, notes, etc.)
-│   │   ├── core/               # Security, database configuration, config settings
-│   │   ├── models/             # SQLAlchemy ORM declarative models
-│   │   ├── schemas/            # Pydantic validation schemas
-│   │   ├── services/           # Business domain logic (dispatch scoring, SLA, sync)
-│   │   └── workers/            # Background tasks and event broadcast
-│   ├── alembic/                # Database migrations
-│   ├── tests/                  # Pytest automated test suite
-│   ├── Dockerfile              # Backend container build specification
-│   └── pyproject.toml          # Python dependencies and tool configuration
-├── web/                        # Next.js web application
-│   ├── src/
-│   │   ├── app/                # App Router pages and API routes
-│   │   ├── components/         # Reusable UI component library
-│   │   ├── hooks/              # Custom React hooks (real-time SSE, auth)
-│   │   ├── lib/                # API client and utility helpers
-│   │   └── types/              # TypeScript type definitions
-│   ├── __tests__/              # Unit and integration tests
-│   ├── Dockerfile              # Web container build specification
-│   └── package.json            # Node / Bun dependencies
-├── mobile/                     # Flutter mobile application
-│   ├── lib/
-│   │   ├── core/               # API client, Drift database, routing configuration
-│   │   ├── features/           # Feature modules (auth, jobs, notes, sync, etc.)
-│   │   └── shared/             # Shared widgets, banners, and modals
-│   ├── test/                   # Flutter unit and widget tests
-│   └── pubspec.yaml            # Dart / Flutter dependencies
-├── scripts/                    # Automation and validation scripts
-│   ├── verify-all.sh           # Comprehensive multi-service lint and test runner
-│   └── smoke.sh                # End-to-end API smoke test suite
-└── docs/                       # Technical documentation
-    ├── ARCHITECTURE.md         # Component boundaries, isolation, concurrency
-    ├── API.md                  # Comprehensive API examples and usage
-    ├── PRODUCT_DECISIONS.md    # Smart Dispatch feature and trade-off rationale
-    ├── KNOWN_LIMITATIONS.md    # Security risks, limitations, and mitigations
-    ├── VERIFICATION.md         # Verification instructions and test matrices
-    └── AI_USAGE.md             # AI assistance and model disclosure
-```
-
----
-
-## Quickstart with Docker Compose
-
-The fastest way to spin up the entire FixFlow stack:
-
-### 1. Configure Environment
 ```bash
-cd marat-chorchoev
-cp .env.example .env
+cp .env.example .env                # optional; defaults work. Never commit .env
+SEED_ON_START=1 docker compose up --build -d   # db → backend (migrates, seeds) → web
+curl http://localhost:8000/api/v1/health/ready  # {"status":"ok",...}
 ```
 
-### 2. Start Services
+| Service | Address |
+| --- | --- |
+| Web app | http://localhost:3000 |
+| API | http://localhost:8000 |
+| OpenAPI (Swagger) | http://localhost:8000/api/v1/docs |
+| PostgreSQL | localhost:5432 (user/db `fixflow`) |
+
+Ports and credentials can be overridden through `.env` (`WEB_PORT`, `API_PORT`, `DB_PORT`, `POSTGRES_*`). If something
+on this machine already uses 5432/8000/3000 (a local PostgreSQL, the dev servers), pick other ports and keep the
+browser-visible addresses consistent, e.g. `DB_PORT=5433 API_PORT=8001 WEB_PORT=3001
+CORS_ORIGINS=http://localhost:3001 NEXT_PUBLIC_API_URL=http://localhost:8001` (the web build bakes in
+`NEXT_PUBLIC_API_URL`, so changing it needs `--build`).
+Startup needs no manual sleeps: the backend waits for PostgreSQL, applies Alembic migrations, then serves
+with 4 workers; `web` starts after the backend reports ready. Data lives in the `postgres_data` and
+`uploads_data` volumes and survives `docker compose stop/start`.
+
+Seed once (idempotent; safe to repeat):
+
 ```bash
-docker compose up --build -d
+docker compose exec backend uv run --no-sync python -m app.cli seed
 ```
 
-### 3. Verify Health
-```bash
-# Check service status
-docker compose ps
+**Reset the demo environment (destroys all local data):**
 
-# Run automated smoke test
-./scripts/smoke.sh
+```bash
+docker compose down -v && SEED_ON_START=1 docker compose up --build -d
 ```
 
-| Service | Local URL | Description |
-|---|---|---|
-| **Web Console** | [http://localhost:3000](http://localhost:3000) | Dispatcher and admin management portal |
-| **API Server** | [http://localhost:8000](http://localhost:8000) | REST API & OpenAPI docs (`/docs`) |
-| **Postgres DB** | `localhost:5432` | Relational storage (`fixflow` database) |
+## Quick start (without Docker)
 
----
-
-## Local Development Setup
-
-### 1. Backend Service
 ```bash
+# 1. PostgreSQL 16 with an empty database, e.g. postgresql://fixflow:fixflow@localhost:5432/fixflow
+# 2. Backend
 cd backend
-
-# Install dependencies with uv
 uv sync
-
-# Run database migrations
-uv run alembic upgrade head
-
-# Start development server
-uv run uvicorn app.main:app --reload --port 8000
+export DATABASE_URL=postgresql+asyncpg://fixflow:fixflow@localhost:5432/fixflow
+export UPLOAD_DIR=./uploads
+uv run python -m app.cli migrate          # alembic upgrade head
+uv run python -m app.cli seed             # deterministic demo data
+uv run uvicorn app.main:app --port 8000 --workers 4   # listens on 127.0.0.1 only (see the phone note below)
+# 3. Web (new terminal)
+cd web && bun install && bun run dev      # http://localhost:3000
 ```
 
-### 2. Web Frontend
-```bash
-cd web
+Restart the API after changing backend code (it does not reload by itself). To start from a clean demo state:
+`uv run python -m app.cli reset-db --yes-destroy-local-data`, then restart the API.
 
-# Install dependencies
-bun install
+Other operational commands (run from `backend/`; in Docker prefix with `docker compose exec backend uv run --no-sync`):
 
-# Start development server
-bun run dev --port 3000
-```
+| Command | Purpose |
+| --- | --- |
+| `python -m app.cli wait-for-db` | block until PostgreSQL accepts connections |
+| `python -m app.cli sla-check` | detect overdue requests and create escalations (safe to repeat) |
+| `python -m app.cli generate-maintenance --date 2026-11-20` | generate due preventive-maintenance requests |
+| `python -m app.cli reset-db --yes-destroy-local-data` | **destructive**: drop all tables, migrate, re-seed. Refuses non-local hosts |
+| `python -m app.cli race-assign` | development-only: two simultaneous assignments for one slot → one 200, one 409 |
 
-### 3. Mobile Field Client
+## Demo accounts (disposable, demo-only)
+
+All accounts share the password **`FixFlow-Demo-2026!`**. They exist only in seeded demo data; never reuse this password.
+
+| Organization | Role | Email |
+| --- | --- | --- |
+| Salymbekov University Facilities | Admin | `admin@salymbekov.example.com` |
+| | Dispatcher | `dispatcher@salymbekov.example.com` |
+| | Requesters, SU main campus | `requester1@salymbekov.example.com`, `requester2@…` |
+| | Requester, AIT campus | `requester3@salymbekov.example.com` |
+| | Requester, College campus | `requester4@salymbekov.example.com` |
+| | Technicians | `tech1@salymbekov.example.com` … `tech4@…` |
+| Salymbekov University Hospital | Admin | `admin@salymbekov-hospital.example.com` |
+| | Requesters | `requester1@salymbekov-hospital.example.com`, `requester2@…` |
+| | Technicians | `tech1@salymbekov-hospital.example.com`, `tech2@…` |
+| **Both** | Dispatcher in Facilities, requester in Hospital | `multi@salymbekov.example.com` |
+
+**Campus scoping.** Requesters can only see and file requests for the facilities of their own campus
+(SU main campus, AIT, or College). An AIT requester cannot pick or submit a Salymbekov University
+facility, and vice versa. The API rejects it with `PROPERTY_NOT_ALLOWED`. Staff manage who may use a
+facility on the Properties page.
+
+Seed data: 2 organizations, 16 users, 13 properties (11 across the three campuses), 19 assets, 8 categories, 20 inventory items,
+59 requests (every status and priority, estimate states, evidence, feedback, asset history, overdue items,
+a collision candidate), 4 maintenance plans (one already due), low-stock items.
+
+## Android app
+
 ```bash
 cd mobile
-
-# Get dependencies
 flutter pub get
-
-# Run on target device or emulator
-flutter run
+flutter build apk --debug          # → mobile/build/app/outputs/flutter-apk/app-debug.apk
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
----
+* **Emulator:** the default server address `http://10.0.2.2:8000` reaches the API on your computer.
+* **Physical phone, USB (simplest; this is how it was tested):** enable USB debugging, run
+  `adb reverse tcp:8000 tcp:8000` and type `http://localhost:8000` into the **Server address** field on the
+  sign-in screen. No Wi-Fi or firewall setup is needed. If `adb devices` says `unauthorized`, accept the prompt on
+  the phone. (In Git Bash prefix `adb shell` commands that contain a `/path` with `MSYS_NO_PATHCONV=1`.)
+* **Physical phone, Wi-Fi:** the API must listen on the network, so start it with `--host 0.0.0.0` (the quick
+  start above binds `127.0.0.1`, which a phone cannot reach), put the phone and the computer on the same Wi-Fi,
+  allow port 8000 through the computer's firewall and type `http://<computer-LAN-IP>:8000` into the **Server
+  address** field. The address is stored on the device, so nothing is baked into the APK. A build-time default
+  can be set with `--dart-define=API_BASE_URL=http://192.168.1.20:8000`.
+* Sign in as a technician (e.g. `tech1@salymbekov.example.com`). Dispatchers and requesters use the web app.
+* Offline demo: open a job while online, turn on airplane mode, write a note and attach a photo
+  (**Pending sync** appears), restart the app, turn the network back on — it is delivered exactly once.
+  If only the server was unreachable (Wi-Fi stayed on), no network event fires: tap **Retry** in the offline
+  banner (or pull to refresh) and the queue is sent.
 
-## Demo Credentials & Seed Data
+## Design
 
-FixFlow includes pre-configured demo users across two isolated organizations (`org1` and `org2`):
+The web and Android interfaces share one visual style: a true-black background, near-black rounded cards
+with hairline borders, bold titles, spaced uppercase labels and a single blue accent. This look is **inspired by
+the Salymbekov University student app**, so the facilities platform feels familiar to students and staff.
+The web styles live in `web/src/app/globals.css` and the Android theme in `mobile/lib/ui/theme.dart`.
 
-| Organization | Role | Email | Password |
-|---|---|---|---|
-| **Org 1** (Metro Facilities) | **Requester** | `requester1@org1.fixflow.local` | `Demo1234!` |
-| **Org 1** (Metro Facilities) | **Dispatcher** | `dispatcher1@org1.fixflow.local` | `Demo1234!` |
-| **Org 1** (Metro Facilities) | **Technician** | `technician1@org1.fixflow.local` | `Demo1234!` |
-| **Org 1** (Metro Facilities) | **Admin** | `admin1@org1.fixflow.local` | `Demo1234!` |
-| **Org 2** (Apex Maintenance) | **Dispatcher** | `dispatcher1@org2.fixflow.local` | `Demo1234!` |
-| **Org 2** (Apex Maintenance) | **Technician** | `technician1@org2.fixflow.local` | `Demo1234!` |
-
-> [!NOTE]
-> Cross-tenant access between Org 1 and Org 2 is strictly blocked at the API layer, returning `403 Forbidden`.
-
----
-
-## Core Capabilities & Features
-
-### 1. Multi-Tenant Isolation
-- Tenant context is derived strictly from verified JWT tokens and `X-Organization-ID` headers.
-- All database queries enforce tenant isolation via explicit `WHERE org_id = :org_id` clauses and `OrgScoped` models.
-- Cross-organization queries are impossible without explicit elevated administrative overrides.
-
-### 2. Smart Dispatch Assistant
-- Evaluates technician candidates using a composite scoring algorithm:
-  $$\text{Score} = 0.40 \times \text{SkillMatch} + 0.30 \times \text{Availability} + 0.20 \times \text{Workload} + 0.10 \times \text{Proximity}$$
-- Provides instant ranking to dispatchers to eliminate manual availability cross-checks.
-
-### 3. Concurrency & Double-Booking Prevention
-- Schedule blocks utilize transactional `SELECT ... FOR UPDATE` locks on technician schedules.
-- Prevents concurrent dispatchers from reserving overlapping time windows for the same technician.
-- Returns a structured `409 Conflict` containing the conflicting booking and alternate candidates.
-
-### 4. Offline-First Mobile Synchronization
-- Technicians can log notes, update status, and inspect job history entirely offline.
-- Mutations are written locally to Drift (SQLite) in a durable `PendingCommands` queue.
-- Re-connection triggers `SyncService` to replay operations with idempotent UUID headers (`Idempotency-Key`), preventing duplicate operations.
-
-### 5. Live Updates via Server-Sent Events (SSE)
-- Web console listens to `/api/v1/events` for real-time state changes (`REQUEST_CREATED`, `ASSIGNED`, `STATUS_CHANGED`).
-- In-memory event dispatch ensures low-latency UI updates without the overhead of full WebSocket bi-directional state management.
-
----
-
-## Verification & Testing
-
-Run all linters, type checks, and automated test suites across the monorepo:
+## Tests and checks
 
 ```bash
-./scripts/verify-all.sh
+./scripts/verify-all.sh            # backend + web + mobile, fails if any step fails
 ```
 
-Individual service test suites:
+or per component (these are the exact commands from the specification):
 
 ```bash
-# Backend pytest suite
-cd backend && uv run pytest -v
-
-# Web test suite
-cd web && bun run test
-
-# Mobile unit & widget tests
-cd mobile && flutter test
-
-# End-to-end API smoke tests
-./scripts/smoke.sh
+(cd backend && uv sync --frozen && uv run ruff check . && uv run ruff format --check . && uv run ty check . && uv run pytest -q)
+(cd web && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun run test:ci && bun run build)
+(cd mobile && flutter pub get && dart format --output=none --set-exit-if-changed lib test && flutter analyze && flutter test && flutter build apk --debug)
 ```
 
----
+Backend tests need a real PostgreSQL. Provide it with `TEST_DATABASE_URL`; the database name **must end
+in `_test`** (the suite drops all its tables and refuses to run otherwise):
 
-## Documentation Links
+```bash
+export TEST_DATABASE_URL=postgresql+asyncpg://fixflow:fixflow@localhost:5432/fixflow_test
+```
 
-- [Architecture Specification](docs/ARCHITECTURE.md) — System boundaries, tenant isolation, and concurrency design.
-- [API Reference](docs/API.md) — Endpoint specifications, curl examples, and payloads.
-- [Product Decisions](docs/PRODUCT_DECISIONS.md) — Rationale for Smart Dispatch, SSE, and Drift SQLite.
-- [Known Limitations & Mitigations](docs/KNOWN_LIMITATIONS.md) — Security threat models, edge cases, and incomplete items.
-- [Verification Guide](docs/VERIFICATION.md) — Step-by-step validation procedures and test matrices.
-- [AI Usage Disclosure](docs/AI_USAGE.md) — Model utilization details and oversight procedures.
+Smoke test of a running, seeded system through real HTTP (positive lifecycle + expected 403/404/409/401):
 
----
+```bash
+./scripts/smoke.sh                 # API_URL=http://localhost:8000 by default; needs bash, curl, node
+```
 
-## License
+What was actually run and what passed is recorded honestly in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
-Proprietary — Developed for the FixFlow Field Service Operations Benchmark.
+## Documentation
+
+* [Architecture](docs/ARCHITECTURE.md) — components, storage, data flow, tenant isolation, concurrency
+* [API](docs/API.md) — endpoint overview and runnable example flows
+* [Product decisions](docs/PRODUCT_DECISIONS.md) — the original feature and trade-offs
+* [Known limitations](docs/KNOWN_LIMITATIONS.md) — incomplete items, risks, mitigations
+* [Verification](docs/VERIFICATION.md) — commands run and observed results
+* [AI usage](docs/AI_USAGE.md) — Claude Code was the main coding assistant; Gemini Flash was used for several tests and for code-structure/architecture explanations
+
+## Repository layout
+
+```
+backend/   FastAPI, SQLAlchemy 2, Alembic, tests      web/      Next.js 16, React, TypeScript (strict), Bun
+mobile/    Flutter (Riverpod, file-backed store)       scripts/  verify-all.sh, smoke.sh
+docs/      the six required documents                  compose.yaml, .env.example
+```

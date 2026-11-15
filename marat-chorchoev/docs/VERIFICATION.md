@@ -1,133 +1,188 @@
-# FixFlow Verification & Testing Guide
+# Verification record
 
-This document describes the test strategy, verification suite, and step-by-step procedures to validate all components of FixFlow.
+What was actually run while building this, what it printed, and what was **not** run.
+Environment: Windows 11, bash; PostgreSQL 16 (initially a throwaway 16.2 server process, from 13 Nov the Windows
+service `postgresql-x64-16`), uv 0.11.19 with Python 3.14.5, Bun 1.4.4, Node 26.13, Flutter 3.50.0 / Dart 3.14.0,
+Android SDK 35/36 + JDK 21 from Android Studio, Docker Desktop 29.9.3 / Compose 5.7.0 (WSL2). Everything up to the
+last section was run natively; the Docker stack was first run on 13 Nov (see "Docker Compose" below).
 
----
+The sections below show the **latest** numbers (re-run on 13 Nov 2026 after the hardening round); the last section
+describes that round and what it found.
 
-## 1. Automated Verification Suite (`verify-all.sh`)
+## Backend
 
-FixFlow provides a single command to execute the full test and lint suite across all three delivery units:
-
-```bash
-./scripts/verify-all.sh
+```
+cd backend && uv sync --frozen && uv run ruff check . && uv run ruff format --check . && uv run ty check . && uv run pytest -q
 ```
 
-This script performs:
-1. **Backend**: Dependency check, Ruff linting, Ruff formatting check, type checking (`ty check`), and Pytest test suite execution.
-2. **Web**: Bun dependencies validation, ESLint linting, TypeScript typecheck (`tsc --noEmit`), Jest/React Testing Library unit tests, and Next.js production build (`next build`).
-3. **Mobile**: Flutter dependencies (`pub get`), Dart formatting check, Flutter analyzer (`flutter analyze`), unit/widget tests (`flutter test`), and debug APK build.
+| Step | Result |
+| --- | --- |
+| `uv sync --frozen` | OK (78 packages, lockfile in sync) |
+| `ruff check` | `All checks passed!` |
+| `ruff format --check` | `49 files already formatted` |
+| `ty check` | `All checks passed!` |
+| `pytest -q` with `TEST_DATABASE_URL=…/fixflow_test` | **52 passed** (≈36 s) |
 
----
+The tests build the schema from the real Alembic migration into an empty database, then truncate between tests.
+Coverage (QA-01): lifecycle permissions and every transition (16), organization isolation, notifications,
+deactivation, auth failures, rate limiting and session revocation (7 incl. protected file downloads and
+upload validation), schedule overlap/adjacency, candidate reasons, **concurrent assignment** (6 parallel
+attempts → exactly one 200 and five 409), note/material/assignment **idempotency replay and key mismatch**,
+**inventory race** (two technicians, last units → one 201, one 409, stock 3), offline-replay conflict
+(`ASSIGNMENT_REVOKED`), smart slot suggestions (12), estimate gate, versioning, immutability, stale-version
+approval, **simultaneous decisions** (one 200, two 409), idempotent decisions, SLA calendar maths (Friday
+evening due after the weekend, holiday skipped, estimate pause, priority recalculation), **overdue escalation
+exactly once across three parallel runs**, **recurring generation de-duplicated across three parallel runs**,
+retired assets (10). Added in the hardening round (7 tests): search wildcards treated literally, NUL characters
+rejected with 422, past preferred-visit windows rejected, canceled requests leaving the default list, estimate totals
+beyond BIGINT, extreme dates in slots/reports, case-insensitive inventory codes plus the `no-store`/`nosniff` headers.
 
-## 2. Backend Verification
+Seed: `python -m app.cli reset-db --yes-destroy-local-data` on a local database → migrations applied, 2
+organizations / 15 users / 59 requests / 31 assignments / 13 completion + 11 intake photos / 5 feedback /
+7 material usages / 4 plans; a second `seed` printed `demo data already present; nothing to do`.
+Re-checked on 13 Nov with the current code on a scratch database that was dropped afterwards: 34 tables (33 plus
+`alembic_version`), the same counts (59 requests, 31 assignments, 24 evidence files), and 11 requests escalated as
+overdue — the overdue count depends on the clock (it was 10 on the first run).
 
-### Unit & Integration Tests (Pytest)
-Execute all tests using `uv`:
-```bash
-cd backend
-uv run pytest -v
+## Smoke test against a running system
+
+API started with `uvicorn app.main:app --workers 2` on the seeded database, then `./scripts/smoke.sh`:
+
+```
+health (live, ready) 200 · sign in as requester/dispatcher/technician/other-org admin
+request created · requester cannot assign (403) · triage (200) · assigned · accepts (200) · starts (200) · IN_PROGRESS
+invalid transition rejected (409) · overlapping assignment conflicts (409)
+other organization cannot read the request (404) · cannot select org A (403) · missing credentials (401) · OpenAPI reachable (200)
+SMOKE PASSED
 ```
 
-### Test Areas Covered:
-- **Authentication & RBAC**:
-  - Valid login returns JWT with claims (`sub`, `org_id`, `role`).
-  - Invalid password returns 401 Unauthorized.
-  - Role-based permissions enforce access rules (e.g. `REQUESTER` cannot assign jobs).
-- **Multi-Tenant Isolation**:
-  - Queries for requests, assignments, notes, and evidence are strictly isolated by `org_id`.
-  - Supplying a header for Org A with a user belonging to Org B yields 403 Forbidden.
-- **Assignment & Concurrency**:
-  - Assigning a technician creates a schedule block.
-  - Overlapping assignment attempts return `409 Conflict` with conflict details and candidate alternatives.
-  - Concurrent assignment requests serialized by transactional locks without deadlocks.
-- **Idempotency**:
-  - Repeating a mutation with identical `Idempotency-Key` returns identical cached payload without creating duplicate database rows.
-- **Health Checks**:
-  - `/api/v1/health/live` returns 200 OK.
-  - `/api/v1/health/ready` validates database connectivity and returns 200 OK.
+## Web
 
----
-
-## 3. Web Frontend Verification
-
-### Lint & Typecheck
-```bash
-cd web
-bun run lint
-bun run typecheck
+```
+cd web && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun run test:ci && bun run build
 ```
 
-### Unit & Component Tests
-```bash
-cd web
-bun run test
+| Step | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` | OK (650 packages; Next 16.4.6, React 19, TypeScript 5.9) |
+| `bun run lint` (ESLint) / `bun run typecheck` (`tsc --noEmit`, strict) | no findings |
+| `bun run test:ci` | **16 passed** in 4 suites |
+| `bun run build` | compiled; 17 pages generated (`output: "standalone"`) |
+| Production runtime | the standalone output copied next to `.next/static` and started with `node server.js` (exactly the image's runner stage): `/login`, `/dashboard`, `/requests`, `/requests/new` → 200, unknown path → 404, a JS chunk served as `application/javascript`, headers `Cache-Control: private, no-store`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`. `next start` also answers but prints a warning that it is unsupported with `output: "standalone"`. |
+
+Tests (QA-02): required-field validation with inline errors and no request sent; search and priority filter sent
+to the server with the empty state; protected route redirects/role mismatch/expired-session handling; and a
+backend-driven mutation (triage) after which the status badge changes without a reload, plus rejected actions
+and double-submit protection.
+
+Manual browser check against the live API (one desktop browser): sign-in as dispatcher → dashboard (counts,
+charts, overdue count, 14-day window) → request queue with URL-driven filters → request detail → **Smart slot
+finder** (found a bug: the page showed "Not Found" because the API process predated the new endpoint; after a
+restart it listed bookable slots). The hardening round added the new-request form (including past-date
+validation), the properties screen and its edit modal, role guards as a requester, stored-XSS titles, bad/unknown
+request ids, sign-out and back-button behaviour, a double-clicked Submit, and three pages at phone width (no
+horizontal overflow). Still not covered: the staff, maintenance-plan and organization-settings screens, and a
+keyboard or screen-reader walk-through.
+
+## Mobile
+
+```
+cd mobile && flutter pub get && dart format --output=none --set-exit-if-changed lib test && flutter analyze && flutter test && flutter build apk --debug
 ```
 
-### Build Verification
-```bash
-cd web
-bun run build
-```
+| Step | Result |
+| --- | --- |
+| `flutter pub get` | OK |
+| `dart format --set-exit-if-changed` | clean |
+| `flutter analyze` | `No issues found!` (a first full run found 20 brace-style infos after formatting; fixed with `dart fix`) |
+| `flutter test` | **32 passed** (assignment card, restart persistence, replay after a dropped connection, idempotent duplicate delivery, conflict states, expired session, validation failure; plus 17 from the hardening round: malformed addresses and odd server replies, a stuck-"syncing" note, overlapping saves, sign-out, recovery after a server outage) |
+| `flutter build apk --debug` | OK — `mobile/build/app/outputs/flutter-apk/app-debug.apk` (≈181 MB debug build; the first build took ≈13 min while Gradle fetched the NDK/CMake, later ones under a minute) |
 
-### Verification Scenarios:
-- **Authentication Flow**: Login form validation, cookie storage, session restore, route guards.
-- **Dispatcher Dashboard**: Request table rendering, status filtering, priority badges, SLA indicators.
-- **Assignment Modal**: Technician candidate list rendering, match score indicators, conflict feedback alert.
-- **Real-time SSE Listener**: Event processing on `REQUEST_CREATED` and `STATUS_CHANGED`, optimistic cache invalidation.
+Real client against live API (`dart run tool/live_check.dart http://localhost:8000`, tech1 account): sign-in, 5
+assigned jobs, the **same note id** returned when the identical command was replayed, a photo uploaded twice
+→ one note, reuse of the id with a different body → `409 COMMAND_ID_REUSED`, unknown job → `404`, profile,
+notifications, sign-out. It also found a real bug (the inbox listed a reopened job the technician no longer
+holds, where notes get `ASSIGNMENT_REVOKED`); the inbox now shows only currently assigned jobs.
 
----
+## Whole pipeline
 
-## 4. Mobile Client Verification
+`./scripts/verify-all.sh` (backend + web + mobile, exactly the commands above) ran to completion:
+`=== ALL CHECKS PASSED ===`, exit code 0. Its first run **failed** at the mobile analyzer step (see above),
+which is what the script is for; the second run, after the fix, passed.
 
-### Static Analysis & Formatting
-```bash
-cd mobile
-dart format --output=none --set-exit-if-changed lib test
-flutter analyze
-```
+## Hardening round (13 Nov 2026)
 
-### Widget & Unit Tests
-```bash
-cd mobile
-flutter test
-```
+An adversarial pass over all three parts after the main build. Defects were reproduced first (a failing test, a
+script, or on the running system) unless a line says they came from reading the code. Backend and mobile fixes have
+regression tests, except the mobile "nothing was changed" message and the appointment label; the web fixes were
+re-checked in the browser but have no Jest test.
 
-### Key Test Coverage:
-- `jobs_test.dart`: Assignment inbox rendering, status chip colors, pull-to-refresh.
-- `offline_queue_test.dart`: SQLite command queueing when network is disconnected.
-- `idempotency_test.dart`: Replay of pending commands with consistent UUID keys upon network reconnection.
-- `conflict_test.dart`: Handling 409 responses from server and displaying conflict recovery dialog.
+**API (~400 probes with throw-away scripts against the running server):** sign-in with injection and
+type-confusion payloads, forged/expired/revoked tokens, rate limiting, forged `X-Organization-ID`, cross-organization
+reads and writes of requests, notes, files and activity, role escalation on every staff endpoint, request-creation
+boundaries (lengths, enums, dates, ids), idempotency replay and 8 concurrent creates, out-of-order transitions,
+10 parallel cancels (exactly one succeeds, one audit entry), 6 requests racing for one technician slot (exactly one
+wins, an overlap by one minute is rejected), upload abuse (PHP/SVG/GIF, oversized dimensions, traversal and odd
+filenames, the 3-image limit under 6 parallel uploads), estimate and inventory numeric limits, extreme dates, CORS.
 
----
+| Found | Fix |
+| --- | --- |
+| NUL (`\u0000`) in any text field or in a query string → 500 | rejected with 422 (`schemas.Body`, middleware) |
+| Assignment slot in year 9999 → 500 | `422 SLOT_TOO_FAR` (more than 2 years ahead) |
+| Dashboard/schedule with year-9999 or year-1 dates → 500 | `422 RANGE_INVALID` (1970–2100) |
+| Estimate total above the BIGINT range → 500 | `422 ESTIMATE_TOTAL_TOO_LARGE` |
+| `%` / `_` in search matched everything (requests, properties, assets, staff, inventory) | escaped (`icontains(..., autoescape=True)`) |
+| Inventory codes unique only case-sensitively | unique ignoring case |
+| JSON responses lacked `Cache-Control: private, no-store` and `nosniff`, contrary to the docs | added for every response |
 
-## 5. End-to-End Smoke Verification (`smoke.sh`)
+**Web:** every modal was rendered as an in-page box (`<dialog open>` skipped `showModal()`), radio buttons were
+mis-sized, and `/schedule` had no role guard. All fixed and re-checked in the browser.
 
-Ensure services are running (`docker compose up -d`) and execute:
+**Mobile — code review, an API-client probe, and a sweep on a physical Android phone (USB, `adb reverse`):**
+a mistyped server address or odd server reply threw uncaught exceptions and left sign-in spinning; a non-API error
+left a queued note in "syncing" until the app restarted; overlapping writes to `state.json` could collide; an action
+that succeeded server-side but failed to refresh claimed "nothing was changed"; **Sign out did nothing**
+(`CircularDependencyError`: the notifier read a provider that depends on it — seen in the phone's log); once the
+app believed it was offline it could not recover from a server-only outage (Refresh was disabled); "Upcoming
+appointments" listed past slots. On the device these were then re-checked: sign-in and sign-out (the backend log
+shows `POST /auth/logout 200`), jobs, inbox, availability and profile, an online note (one copy on the server), an
+offline note → app force-killed → reconnect → exactly one copy, recovery with **Retry**, validation on the materials
+and completion screens (no valid submission was made; the job stayed `IN_PROGRESS`), and landscape with no layout
+overflow.
 
-```bash
-./scripts/smoke.sh
-```
+**Docker, reviewed statically:** neither build context had a `.dockerignore`, so `COPY . .` would have copied the
+host's Windows `backend/.venv` (162 MB) over the image's Linux virtualenv and the host's `web/node_modules` over the
+image's — both added now.
 
-### Sequence of Checks:
-1. **Liveness Probe**: Confirms API process is alive.
-2. **Readiness Probe**: Confirms database connection pool is active.
-3. **Requester Authentication**: Authenticates demo user and extracts Bearer JWT.
-4. **Current User Profile**: Fetches `/api/v1/auth/me` to determine active organization.
-5. **Work Order Creation**: Creates a new service request and verifies 201 Created response.
-6. **Cross-Tenant Isolation Gate**: Tries to access Org 1 request using Org 2 credentials; asserts `403 Forbidden`.
+## Docker Compose (13 Nov 2026)
 
----
+Docker Desktop was started and the stack was run with `docker compose --progress=plain up --build -d` using a local,
+gitignored `.env` that moves the published ports (`DB_PORT=5433`, `API_PORT=8001`, `WEB_PORT=3001`) and sets
+`CORS_ORIGINS=http://localhost:3001`, `NEXT_PUBLIC_API_URL=http://localhost:8001`, `SEED_ON_START=1`, because a local
+PostgreSQL service and the dev servers occupy 5432/3000/8000.
 
-## 6. Verification Matrix Summary
+| Check | Result |
+| --- | --- |
+| First start | **Failed, a real defect:** the backend crashed in a loop with `unrecognized arguments: && exec uv run …` and the web container never started. The `Dockerfile` `CMD` put `&&` inside `${SEED_ON_START:+…}`, which the shell passes to `app.cli seed` as a literal argument — so the documented `SEED_ON_START=1 docker compose up` never worked. Fixed with an `if [ -n "$SEED_ON_START" ]; then …; fi`; the health check start period was raised from 40 s to 120 s to cover the first-start seed. |
+| Second start | db, backend and web up; migrations applied; seed printed `done. 11 overdue request(s) escalated`; 4 uvicorn workers; `/api/v1/health/ready` → `{"status":"ok","database":"up","schema_revision":"0001"}` |
+| `scripts/smoke.sh` against the container API | **SMOKE PASSED** (lifecycle plus the expected 403/404/409/401) |
+| Roles | admin, dispatcher, requester, technician, other-organization admin and the two-organization account all sign in; the dispatcher sees the seeded requests and the dashboard |
+| Image contents | the image has the current code: `no-store`/`nosniff` headers, NUL → 422, `%` search matches nothing |
+| CORS | allows `http://localhost:3001` (the web container), not `http://localhost:3000` |
+| Uploads volume | a seeded evidence image is served (`image/png`, 4554 bytes) |
+| Web container in a browser | sign-in as dispatcher, dashboard with the seeded data (40 open, 10 overdue), all API calls to `:8001`, live stream connected, no console errors |
+| Persistence (E2E-10, containers only) | a request and an uploaded image created through the API survived `docker compose restart` (second start printed `demo data already present; nothing to do`; the event listener logged a disconnect when PostgreSQL restarted and reconnected) and a full `docker compose down` followed by `up -d` (volumes kept); no duplicate seed data |
 
-| Test Area | Tooling | Success Criteria |
-|---|---|---|
-| Backend Lint & Format | `ruff check`, `ruff format` | 0 errors, 0 warnings |
-| Backend Types | `ty check` | 0 type errors |
-| Backend Tests | `pytest` | 100% pass rate |
-| Web Lint & Types | `eslint`, `tsc` | Clean exit, no errors |
-| Web Tests | `jest` / RTL | All test suites passing |
-| Web Build | `next build` | Optimized production bundle generated |
-| Mobile Lint & Format | `flutter analyze`, `dart format` | No issues found |
-| Mobile Tests | `flutter test` | All unit & widget tests pass |
-| Smoke Tests | `smoke.sh` | All steps OK, isolation verified |
+Not done: the default ports on a clean machine, the Android app against the container API, restarting the *phone* during
+E2E-10, and a Windows-free (Linux) build host.
+
+## Not run
+
+* Docker Compose on the default ports / from a clean checkout, and the Android app against the container API (the
+  stack itself was run, see "Docker Compose").
+* On the phone: camera/gallery photos and the offline photo queue, Accept/Start/Decline/Block/Complete,
+  reassignment while offline (E2E-05), marking notifications read, large font sizes.
+* E2E-10 (restart of every service and the app, then re-check); keyboard-only and screen-reader passes on the web app.
+* Multi-process race tests, and dedicated cross-organization tests for assignment, estimate and material ids.
+
+See `docs/KNOWN_LIMITATIONS.md` for the full list and the reasons.

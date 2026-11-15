@@ -1,173 +1,155 @@
-'use client'
+"use client";
 
-import React, { useState, useEffect } from 'react'
-import Link from 'next/link'
-import {
-  Calendar as CalendarIcon,
-  Clock,
-  User,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-} from 'lucide-react'
-import { assignmentsApi } from '@/lib/api'
-import type { Assignment } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { formatDate } from '@/lib/utils'
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { AuthGuard } from "@/components/auth-guard";
+import { Button, Card, Empty, ErrorNote, PageHeader, SelectField, Spinner } from "@/components/ui";
+import { addDays, fmtDay, fmtTime, localDate, WEEKDAYS, zonedToUtc } from "@/lib/format";
+import { useApiQuery } from "@/lib/hooks";
+import { useMembership } from "@/lib/session";
 
-export default function SchedulePage() {
-  const [assignments, setAssignments] = useState<Assignment[]>([])
-  const [loading, setLoading] = useState(true)
+interface Appointment {
+  assignment_id: string;
+  technician_id: string;
+  request_id: string;
+  reference: string;
+  title: string;
+  request_status: string;
+  priority: string;
+  assignment_status: string;
+  is_active: boolean;
+  start_at: string;
+  end_at: string;
+}
+interface ScheduleData {
+  timezone: string;
+  technicians: {
+    id: string;
+    full_name: string;
+    is_active: boolean;
+    availability: { weekday: number; starts_at: string; ends_at: string }[];
+    time_off: { start_at: string; end_at: string; reason: string | null }[];
+  }[];
+  appointments: Appointment[];
+}
 
-  useEffect(() => {
-    assignmentsApi
-      .myAssignments()
-      .then((data) => setAssignments(data))
-      .catch(() => {
-        // Fallback sample schedule items
-        setAssignments([
-          {
-            id: 'assign-1',
-            request_id: '1',
-            technician_id: 'tech-1',
-            status: 'in_progress',
-            scheduled_start: new Date(Date.now() + 1000 * 60 * 60 * 1).toISOString(),
-            scheduled_end: new Date(Date.now() + 1000 * 60 * 60 * 3).toISOString(),
-            notes: 'Check coolant pressure and condenser coils',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          {
-            id: 'assign-2',
-            request_id: '2',
-            technician_id: 'tech-2',
-            status: 'pending',
-            scheduled_start: new Date(Date.now() + 1000 * 60 * 60 * 5).toISOString(),
-            scheduled_end: new Date(Date.now() + 1000 * 60 * 60 * 7).toISOString(),
-            notes: 'Replace hydraulic closer sensor',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ])
-      })
-      .finally(() => setLoading(false))
-  }, [])
+const overlaps = (a: Appointment, b: Appointment) => a.start_at < b.end_at && b.start_at < a.end_at;
+
+function ScheduleView() {
+  const membership = useMembership();
+  const tz = membership?.timezone ?? "UTC";
+  const [view, setView] = useState<"day" | "week">("week");
+  const [anchor, setAnchor] = useState(() => localDate(new Date(), tz));
+
+  const days = useMemo(() => {
+    if (view === "day") return [anchor];
+    const date = new Date(`${anchor}T12:00:00Z`);
+    const monday = addDays(anchor, -((date.getUTCDay() + 6) % 7));
+    return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  }, [anchor, view]);
+
+  const query = useApiQuery<ScheduleData>("/schedule", { date_from: days[0], date_to: days[days.length - 1] });
+  const data = query.data;
+
+  const cell = (techId: string, day: string) => {
+    const from = zonedToUtc(day, "00:00", tz).toISOString();
+    const to = zonedToUtc(addDays(day, 1), "00:00", tz).toISOString();
+    return (data?.appointments ?? []).filter((a) => a.technician_id === techId && a.start_at < to && a.end_at > from);
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dispatch Schedule</h1>
-          <p className="text-sm text-muted-foreground">
-            Calendar view of field technician jobs and maintenance appointments
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            <ChevronLeft className="w-4 h-4 mr-1" />
-            Previous
-          </Button>
-          <Button variant="outline" size="sm">
-            Today
-          </Button>
-          <Button variant="outline" size="sm">
-            Next
-            <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-3">
-        {/* Scheduled List */}
-        <div className="md:col-span-2 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Upcoming Dispatches</CardTitle>
-              <CardDescription>Scheduled jobs sorted chronologically</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  Loading schedule...
+    <>
+      <PageHeader
+        title="Schedule"
+        subtitle={`Planned technician workload · times in ${tz}`}
+        actions={
+          <div className="row">
+            <SelectField label="View" value={view} onChange={(e) => setView(e.target.value as "day" | "week")}>
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+            </SelectField>
+            <Button variant="secondary" onClick={() => setAnchor(addDays(anchor, view === "day" ? -1 : -7))}>
+              Previous
+            </Button>
+            <Button variant="secondary" onClick={() => setAnchor(localDate(new Date(), tz))}>
+              Today
+            </Button>
+            <Button variant="secondary" onClick={() => setAnchor(addDays(anchor, view === "day" ? 1 : 7))}>
+              Next
+            </Button>
+          </div>
+        }
+      />
+      {query.isLoading ? <Spinner /> : null}
+      <ErrorNote error={query.error} onRetry={() => void query.refetch()} />
+      {data && data.technicians.length === 0 ? <Empty title="No technicians" /> : null}
+      {data && data.technicians.length > 0 ? (
+        <Card>
+          <div className="board" style={{ gridTemplateColumns: `160px repeat(${days.length}, minmax(${view === "day" ? 320 : 130}px, 1fr))` }} role="table" aria-label="Technician schedule">
+            <div className="board-cell board-head" role="columnheader">
+              Technician
+            </div>
+            {days.map((day) => (
+              <div className="board-cell board-head" role="columnheader" key={day}>
+                {fmtDay(zonedToUtc(day, "12:00", tz).toISOString(), tz)}
+              </div>
+            ))}
+            {data.technicians.map((tech) => (
+              <div key={tech.id} style={{ display: "contents" }} role="row">
+                <div className="board-cell" role="rowheader">
+                  <strong>{tech.full_name}</strong>
+                  {!tech.is_active ? <div className="muted small">inactive</div> : null}
                 </div>
-              ) : assignments.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  No appointments scheduled.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {assignments.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-4 rounded-lg border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-primary/50 transition-colors"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/requests/${item.request_id}`}
-                            className="font-semibold text-sm hover:underline text-primary"
-                          >
-                            Job #{item.id.slice(0, 8)}
-                          </Link>
-                          <Badge variant="secondary" className="capitalize text-xs">
-                            {item.status.replace('_', ' ')}
-                          </Badge>
-                        </div>
-                        {item.notes && (
-                          <p className="text-xs text-muted-foreground">{item.notes}</p>
-                        )}
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />
-                            {item.scheduled_start ? formatDate(item.scheduled_start) : 'TBD'}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <User className="w-3.5 h-3.5" />
-                            {item.technician?.full_name || 'Assigned Tech'}
-                          </span>
-                        </div>
+                {days.map((day) => {
+                  const weekday = (new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7;
+                  const hours = tech.availability.filter((a) => a.weekday === weekday);
+                  const off = tech.time_off.filter((t) => {
+                    const from = zonedToUtc(day, "00:00", tz).toISOString();
+                    const to = zonedToUtc(addDays(day, 1), "00:00", tz).toISOString();
+                    return t.start_at < to && t.end_at > from;
+                  });
+                  const appts = cell(tech.id, day);
+                  return (
+                    <div className="board-cell" role="cell" key={day}>
+                      <div className="muted small">
+                        {hours.length ? hours.map((h) => `${h.starts_at}–${h.ends_at}`).join(", ") : `${WEEKDAYS[weekday]} off`}
                       </div>
-
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/requests/${item.request_id}`}>View Job</Link>
-                      </Button>
+                      {off.map((t, i) => (
+                        <span className="appt off" key={i}>
+                          Time off{t.reason ? `: ${t.reason}` : ""}
+                        </span>
+                      ))}
+                      {appts.map((a) => {
+                        const clash = appts.some((b) => b !== a && b.is_active && a.is_active && overlaps(a, b));
+                        return (
+                          <Link key={a.assignment_id} href={`/requests/${a.request_id}`} className={`appt${clash ? " conflict" : ""}`}>
+                            <strong>
+                              {fmtTime(a.start_at, tz)}–{fmtTime(a.end_at, tz)}
+                            </strong>{" "}
+                            {a.reference}
+                            <div className="small">
+                              {a.title} · {a.request_status.replace("_", " ").toLowerCase()}
+                              {clash ? " · CONFLICT" : ""}
+                            </div>
+                          </Link>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+    </>
+  );
+}
 
-        {/* Schedule Sidebar info */}
-        <div>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Today&apos;s Highlights</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Total Dispatches</span>
-                <span className="font-semibold">{assignments.length}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Active in Field</span>
-                <span className="font-semibold text-amber-600">
-                  {assignments.filter((a) => a.status === 'in_progress').length}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Completed</span>
-                <span className="font-semibold text-emerald-600">
-                  {assignments.filter((a) => a.status === 'completed').length}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
-  )
+export default function SchedulePage() {
+  return (
+    <AuthGuard roles={["ADMIN", "DISPATCHER", "TECHNICIAN"]}>
+      <ScheduleView />
+    </AuthGuard>
+  );
 }

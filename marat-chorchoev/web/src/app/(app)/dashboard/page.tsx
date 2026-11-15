@@ -1,266 +1,226 @@
-'use client'
+"use client";
 
-import React, { useEffect, useState } from 'react'
-import Link from 'next/link'
-import {
-  ClipboardList,
-  AlertCircle,
-  Clock,
-  CheckCircle2,
-  Plus,
-  ArrowRight,
-} from 'lucide-react'
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from 'recharts'
-import { dashboardApi } from '@/lib/api'
-import type { DashboardStats } from '@/types'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import Link from "next/link";
+import { useState } from "react";
+import { AuthGuard } from "@/components/auth-guard";
+import { SlaBadge, StatusBadge } from "@/components/badges";
+import { DailyChart, DistributionChart, type DailyPoint } from "@/components/charts";
+import { Card, Empty, ErrorNote, PageHeader, SelectField, Spinner, TextField } from "@/components/ui";
+import { fmtDateTime, fmtMoney, minutesToText, statusLabel, titleCase } from "@/lib/format";
+import { useApiQuery } from "@/lib/hooks";
+import { useMembership } from "@/lib/session";
+import type { Category, Page, RequestRow, Technician } from "@/lib/types";
+
+interface Dashboard {
+  range: { date_from: string; date_to: string; timezone: string };
+  status_counts: Record<string, number>;
+  open_count: number;
+  overdue_count: number;
+  at_risk_count: number;
+  created_in_range: number;
+  completed_in_range: number;
+  upcoming_appointments: {
+    window_days: number;
+    count: number;
+    next: { request_id: string; reference: string; title: string; technician_name: string; start_at: string; end_at: string }[];
+  };
+  daily: { date_from: string; date_to: string; unit: string; series: DailyPoint[] };
+  priority_distribution: { priority: string; count: number }[];
+  category_distribution: { category: string; count: number }[];
+  utilization: {
+    planned_minutes: number;
+    available_minutes: number;
+    utilization_percent: number | null;
+    technicians: { technician_id: string; full_name: string; planned_minutes: number; available_minutes: number; utilization_percent: number | null }[];
+  };
+  financials: {
+    currency: string;
+    approved_estimates_total_minor: number;
+    approved_estimates_count: number;
+    material_usage_total_minor: number;
+    material_usage_count: number;
+    note: string;
+  };
+}
+
+const STATUS_ORDER = ["SUBMITTED", "TRIAGED", "SCHEDULED", "ACCEPTED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "REOPENED", "CLOSED", "CANCELED"];
+
+function DashboardView() {
+  const membership = useMembership();
+  const tz = membership?.timezone ?? "UTC";
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [category, setCategory] = useState("");
+  const [technician, setTechnician] = useState("");
+
+  const dashboard = useApiQuery<Dashboard>("/reports/dashboard", {
+    date_from: from,
+    date_to: to,
+    category_id: category,
+    technician_id: technician,
+  });
+  const categories = useApiQuery<Category[]>("/categories");
+  const technicians = useApiQuery<Technician[]>("/technicians");
+  const overdue = useApiQuery<Page<RequestRow>>("/requests", {
+    sla_state: "OVERDUE",
+    open_only: true,
+    sort: "due",
+    page_size: 8,
+  });
+
+  const d = dashboard.data;
+  return (
+    <>
+      <PageHeader title="Operations dashboard" subtitle={membership ? `${membership.organization_name} · times in ${tz}` : undefined} />
+      <Card className="filters">
+        <div className="grid cols-4">
+          <TextField label="From" type="date" value={from} onChange={(e) => setFrom(e.target.value)} hint="Default: 14 days" />
+          <TextField label="To" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <SelectField label="Category" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">All categories</option>
+            {categories.data?.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </SelectField>
+          <SelectField label="Technician" value={technician} onChange={(e) => setTechnician(e.target.value)}>
+            <option value="">All technicians</option>
+            {technicians.data?.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.full_name}
+              </option>
+            ))}
+          </SelectField>
+        </div>
+      </Card>
+
+      {dashboard.isLoading ? <Spinner /> : null}
+      <ErrorNote error={dashboard.error} onRetry={() => void dashboard.refetch()} />
+      {d ? (
+        <div className="stack" style={{ marginTop: "1rem" }}>
+          <div className="grid cols-4">
+            <Card>
+              <Link className="stat-link" href="/requests?open=1">
+                <div className="stat">{d.open_count}</div>
+                <div className="muted">Open requests</div>
+              </Link>
+            </Card>
+            <Card>
+              <Link className="stat-link" href="/requests?sla_state=OVERDUE">
+                <div className="stat" style={{ color: d.overdue_count ? "var(--danger)" : undefined }}>
+                  {d.overdue_count}
+                </div>
+                <div className="muted">Overdue ({d.at_risk_count} at risk)</div>
+              </Link>
+            </Card>
+            <Card>
+              <div className="stat">{d.upcoming_appointments.count}</div>
+              <div className="muted">Appointments, next {d.upcoming_appointments.window_days} days</div>
+            </Card>
+            <Card>
+              <div className="stat">{d.completed_in_range}</div>
+              <div className="muted">
+                Completed {d.range.date_from} → {d.range.date_to}
+              </div>
+            </Card>
+          </div>
+
+          <Card title="Reports by status (all time)">
+            <div className="row">
+              {STATUS_ORDER.map((s) => (
+                <Link key={s} href={`/requests?status=${s}`} className="badge" style={{ textDecoration: "none", color: "inherit" }}>
+                  {statusLabel(s)} <strong>{d.status_counts[s] ?? 0}</strong>
+                </Link>
+              ))}
+            </div>
+          </Card>
+
+          <div className="grid cols-2">
+            <Card title="New vs completed, last 14 days">
+              <DailyChart series={d.daily.series} unit={d.daily.unit} range={`${d.daily.date_from} to ${d.daily.date_to}`} />
+            </Card>
+            <Card title="Priority distribution">
+              <DistributionChart title="Priority distribution" rows={d.priority_distribution.map((p) => ({ label: titleCase(p.priority), count: p.count }))} />
+              <h3 style={{ marginTop: "1rem" }}>By category</h3>
+              <DistributionChart title="Category distribution" rows={d.category_distribution.map((c) => ({ label: c.category, count: c.count }))} />
+            </Card>
+          </div>
+
+          <div className="grid cols-2">
+            <Card title="Overdue queue" actions={<Link href="/requests?sla_state=OVERDUE">View all</Link>}>
+              {overdue.isLoading ? <Spinner /> : null}
+              {overdue.data && overdue.data.items.length === 0 ? <Empty title="Nothing is overdue" /> : null}
+              {overdue.data?.items.map((r) => (
+                <div key={r.id} className="row between" style={{ padding: "0.35rem 0", borderBottom: "1px solid var(--border)" }}>
+                  <Link href={`/requests/${r.id}`}>
+                    {r.reference} · {r.title}
+                  </Link>
+                  <span className="row">
+                    <StatusBadge status={r.status} />
+                    <SlaBadge sla={r.sla} timeZone={tz} detailed />
+                  </span>
+                </div>
+              ))}
+            </Card>
+            <Card title={`Upcoming appointments (${d.upcoming_appointments.window_days} days)`}>
+              {d.upcoming_appointments.next.length === 0 ? <Empty title="No upcoming appointments" /> : null}
+              {d.upcoming_appointments.next.map((a) => (
+                <div key={a.request_id} style={{ padding: "0.35rem 0", borderBottom: "1px solid var(--border)" }}>
+                  <Link href={`/requests/${a.request_id}`}>
+                    {a.reference} · {a.title}
+                  </Link>
+                  <div className="muted small">
+                    {fmtDateTime(a.start_at, tz)} · {a.technician_name}
+                  </div>
+                </div>
+              ))}
+            </Card>
+          </div>
+
+          <div className="grid cols-2">
+            <Card title="Technician utilization">
+              <p className="stat">{d.utilization.utilization_percent === null ? "—" : `${d.utilization.utilization_percent}%`}</p>
+              <p className="muted small">
+                Planned assignment minutes ({minutesToText(d.utilization.planned_minutes)}) ÷ available working minutes (
+                {minutesToText(d.utilization.available_minutes)}) for active technicians in the range, using availability
+                minus time off in {d.range.timezone}. Not capped: appointments cannot overlap or exceed availability.
+              </p>
+              {d.utilization.technicians.map((t) => (
+                <div className="hbar" key={t.technician_id}>
+                  <span>{t.full_name}</span>
+                  <div className="hbar-track">
+                    <div className="hbar-fill" style={{ width: `${Math.min(t.utilization_percent ?? 0, 100)}%` }} />
+                  </div>
+                  <strong>{t.utilization_percent === null ? "—" : `${t.utilization_percent}%`}</strong>
+                </div>
+              ))}
+            </Card>
+            <Card title="Estimated values and material costs">
+              <dl className="kv">
+                <dt>Approved estimates</dt>
+                <dd>
+                  {fmtMoney(d.financials.approved_estimates_total_minor, d.financials.currency)} ({d.financials.approved_estimates_count})
+                </dd>
+                <dt>Material usage cost</dt>
+                <dd>
+                  {fmtMoney(d.financials.material_usage_total_minor, d.financials.currency)} ({d.financials.material_usage_count} entries)
+                </dd>
+              </dl>
+              <p className="muted small">{d.financials.note} Material costs use the unit price at consumption time.</p>
+            </Card>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    dashboardApi
-      .stats()
-      .then((data) => {
-        setStats(data)
-      })
-      .catch(() => {
-        // Fallback demo data if backend stats is not ready yet
-        setStats({
-          open_requests: 12,
-          overdue_requests: 3,
-          requests_today: 5,
-          avg_resolution_hours: 4.2,
-          requests_by_status: {
-            new: 4,
-            triaged: 2,
-            assigned: 3,
-            in_progress: 3,
-            on_hold: 1,
-            resolved: 15,
-            closed: 24,
-            cancelled: 1,
-          },
-          requests_by_priority: {
-            low: 3,
-            medium: 5,
-            high: 3,
-            urgent: 1,
-          },
-          requests_trend: [
-            { date: 'Mon', count: 4 },
-            { date: 'Tue', count: 7 },
-            { date: 'Wed', count: 5 },
-            { date: 'Thu', count: 8 },
-            { date: 'Fri', count: 12 },
-            { date: 'Sat', count: 3 },
-            { date: 'Sun', count: 2 },
-          ],
-          technician_utilization: [],
-        })
-      })
-      .finally(() => setLoading(false))
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-10 w-36" />
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-lg" />
-          ))}
-        </div>
-        <Skeleton className="h-80 w-full rounded-lg" />
-      </div>
-    )
-  }
-
-  const statCards = [
-    {
-      title: 'Open Requests',
-      value: stats?.open_requests ?? 0,
-      icon: ClipboardList,
-      description: 'Active & in progress',
-      color: 'text-blue-600',
-    },
-    {
-      title: 'Overdue / SLA Risk',
-      value: stats?.overdue_requests ?? 0,
-      icon: AlertCircle,
-      description: 'Action required immediately',
-      color: 'text-rose-600',
-    },
-    {
-      title: 'Requests Today',
-      value: stats?.requests_today ?? 0,
-      icon: Clock,
-      description: 'Submitted in last 24h',
-      color: 'text-amber-600',
-    },
-    {
-      title: 'Avg Resolution Time',
-      value: `${stats?.avg_resolution_hours ?? 0}h`,
-      icon: CheckCircle2,
-      description: 'From triage to resolved',
-      color: 'text-emerald-600',
-    },
-  ]
-
-  const statusChartData = stats?.requests_by_status
-    ? Object.entries(stats.requests_by_status).map(([status, count]) => ({
-        status: status.replace('_', ' '),
-        count,
-      }))
-    : []
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard Overview</h1>
-          <p className="text-sm text-muted-foreground">
-            Real-time operational metrics and service dispatch status
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button asChild>
-            <Link href="/requests/new" className="flex items-center gap-1.5">
-              <Plus className="w-4 h-4" />
-              New Service Request
-            </Link>
-          </Button>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {statCards.map((card) => {
-          const Icon = card.icon
-          return (
-            <Card key={card.title}>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {card.title}
-                </CardTitle>
-                <Icon className={`h-4 w-4 ${card.color}`} />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{card.value}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {card.description}
-                </p>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
-
-      {/* Charts */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              Weekly Request Volume
-            </CardTitle>
-            <CardDescription>
-              Number of new requests submitted over the past 7 days
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats?.requests_trend || []}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                <XAxis dataKey="date" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    borderColor: 'hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar
-                  dataKey="count"
-                  fill="hsl(var(--primary))"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              Requests by Status
-            </CardTitle>
-            <CardDescription>Current lifecycle distribution</CardDescription>
-          </CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={statusChartData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.3} />
-                <XAxis type="number" tickLine={false} axisLine={false} />
-                <YAxis
-                  dataKey="status"
-                  type="category"
-                  tickLine={false}
-                  axisLine={false}
-                  width={90}
-                  fontSize={11}
-                />
-                <Tooltip
-                  cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    borderColor: 'hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar
-                  dataKey="count"
-                  fill="#818cf8"
-                  radius={[0, 4, 4, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Action Banner */}
-      <Card className="bg-primary/5 border-primary/20">
-        <CardContent className="flex flex-col sm:flex-row items-center justify-between p-6 gap-4">
-          <div className="space-y-1 text-center sm:text-left">
-            <h3 className="font-semibold text-base">Triage & Dispatching Queue</h3>
-            <p className="text-sm text-muted-foreground">
-              Review unassigned tickets, assess priority, and use Smart Dispatch recommendations.
-            </p>
-          </div>
-          <Button asChild variant="default">
-            <Link href="/requests" className="flex items-center gap-2">
-              View Request Queue
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  )
+    <AuthGuard roles={["ADMIN", "DISPATCHER"]}>
+      <DashboardView />
+    </AuthGuard>
+  );
 }
+

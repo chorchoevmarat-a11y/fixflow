@@ -1,55 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'core/router.dart';
+import 'package:path_provider/path_provider.dart';
 
-void main() {
+import 'app.dart';
+import 'core/providers.dart';
+import 'core/store.dart';
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ProviderScope(child: FixFlowApp()));
-}
-
-class FixFlowApp extends ConsumerWidget {
-  const FixFlowApp({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
-
-    return MaterialApp.router(
-      title: 'FixFlow',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1D4ED8),
-          brightness: Brightness.light,
-        ),
-        fontFamily: 'Inter',
-        useMaterial3: true,
-        appBarTheme: const AppBarTheme(
-          centerTitle: false,
-          elevation: 0,
-        ),
-        cardTheme: CardTheme(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-          filled: true,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-      ),
-      routerConfig: router,
-    );
-  }
+  final directory = await getApplicationDocumentsDirectory();
+  final store = await LocalStore.open(directory);
+  const secrets = KeystoreSecretStore();
+  final token = await secrets.read();
+  runApp(
+    ProviderScope(
+      overrides: [
+        storeProvider.overrideWithValue(store),
+        initialTokenProvider.overrideWithValue(token),
+      ],
+      child: const FixflowApp(),
+    ),
+  );
 }
